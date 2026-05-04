@@ -22,6 +22,7 @@ broker:
 quantlog:
   enabled: true
   auto_analytics: true
+  consolidated_run_file: true
 
 artifacts:
   enabled: true
