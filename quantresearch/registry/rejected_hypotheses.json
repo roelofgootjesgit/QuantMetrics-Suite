@@ -12,6 +12,21 @@
         "trade_count": 11
       },
       "reason": "negative_expectancy"
+    },
+    {
+      "id": "REJ-002",
+      "date": "2026-05-04",
+      "statement": "London/NY overlap H1 breakout (close confirmation, tp_multiplier=1.5) generates positive expectancy on XAUUSD, NAS100, US30, EURUSD, GBPUSD",
+      "evidence_experiment_id": "EXP-003",
+      "metrics": {
+        "XAUUSD": { "mean_r": -0.109, "ci_lower": -0.196 },
+        "NAS100": { "mean_r": 0.101, "ci_lower": 0.017 },
+        "US30": { "mean_r": -0.011, "ci_lower": -0.094 },
+        "EURUSD": { "mean_r": -0.498, "ci_lower": -0.509 },
+        "GBPUSD": { "mean_r": -0.496, "ci_lower": -0.504 }
+      },
+      "reason": "economic_gate_fail_all_instruments",
+      "learned": "H1 overlap breakout is mean-reverting on EURUSD/GBPUSD. NAS100 shows weak continuation signal (ci_lower=0.017) — warrants isolated follow-up at lower timeframe or different TP multiplier if pre-registered separately."
     }
   ]
 }

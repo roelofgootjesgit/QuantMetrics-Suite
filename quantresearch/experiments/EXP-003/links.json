@@ -1,0 +1,7 @@
+{
+  "matrix_summary": "quantmetrics_os/runs/EXP-003/matrix_summary.json",
+  "variant_dir": "quantmetrics_os/runs/EXP-003/variant",
+  "hyp003_preregistration": "quantresearch/pipelines/hyp003_preregistration.json",
+  "hyp003_experiment_ledger": "quantresearch/experiments/EXP-003/experiment.json",
+  "paths_are_absolute": false
+}

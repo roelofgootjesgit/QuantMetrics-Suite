@@ -1,0 +1,122 @@
+{
+  "$schema": "../../schemas/experiment_ledger_v1.schema.json",
+  "experiment_id": "EXP-003",
+  "title": "HYP-003 London/NY overlap H1 breakout — rejected (economic gates)",
+  "status": "rejected",
+  "created_at_utc": "2026-05-04T09:27:53.000000Z",
+  "completed_at_utc": "2026-05-04T10:45:00.000000Z",
+  "matrix_type": "custom",
+  "baseline_run_id": null,
+  "canonical_artifact_path": "quantmetrics_os/runs/EXP-003",
+  "hypothesis_summary": "H1 range after 13:30 UTC, next-bar close breakout, entry at following open, tp_multiplier=1.5, five instruments; preregistered in quantresearch/pipelines/hyp003_preregistration.json.",
+  "primary_metric": "ci_95_lower_mean_r",
+  "secondary_metrics": [
+    "mean_r",
+    "profit_factor",
+    "trade_count",
+    "stat_verdict",
+    "econ_verdict"
+  ],
+  "promotion_decision": "REJECT",
+  "discovery_tier": "none",
+  "next_action": "archive",
+  "next_experiment_id": null,
+  "suite": {
+    "suite_root": "C:/Users/Gebruiker/quantmetrics-suite",
+    "quantbuild_root": "C:/Users/Gebruiker/quantmetrics-suite/quantbuild",
+    "quantmetrics_os_root": "C:/Users/Gebruiker/quantmetrics-suite/quantmetrics_os",
+    "quantanalytics_root": "C:/Users/Gebruiker/quantmetrics-suite/quantanalytics"
+  },
+  "quantresearch": {
+    "preregistration_pipeline": "quantresearch/pipelines/hyp003_preregistration.json",
+    "matrix_summary": "quantmetrics_os/runs/EXP-003/matrix_summary.json",
+    "variant_artifacts": "quantmetrics_os/runs/EXP-003/variant",
+    "rejected_registry": "quantresearch/registry/rejected_hypotheses.json"
+  },
+  "quantresearch_files": {
+    "hypothesis_md": "hypothesis.md",
+    "experiment_plan_md": "experiment_plan.md",
+    "results_summary_md": "results_summary.md",
+    "decision_md": "decision.md",
+    "links_json": "links.json"
+  },
+  "matrix_definition": {
+    "base_config_dir": "quantbuild/configs/experiments/exp003_overlap_breakout",
+    "start_date": "2021-01-01",
+    "end_date": "2025-12-31",
+    "engine": "london_ny_overlap_breakout",
+    "instruments": [
+      {
+        "symbol": "XAUUSD",
+        "config": "XAUUSD.yaml",
+        "trades": 495
+      },
+      {
+        "symbol": "NAS100",
+        "config": "NAS100.yaml",
+        "trades": 596
+      },
+      {
+        "symbol": "US30",
+        "config": "US30.yaml",
+        "trades": 581
+      },
+      {
+        "symbol": "EURUSD",
+        "config": "EURUSD.yaml",
+        "trades": 654
+      },
+      {
+        "symbol": "GBPUSD",
+        "config": "GBPUSD.yaml",
+        "trades": 665
+      }
+    ],
+    "total_trades": 2991
+  },
+  "notes": "Matrix: quantmetrics_os/scripts/run_exp003_matrix.py. Inference: trade_closed R from per-run QuantLog JSONL; minimum_n=200 per instrument, effect gate 0.028R.",
+  "governance_status": "REJECT",
+  "academic_status": "FAIL",
+  "effective_status": "REJECTED",
+  "rejection_reason": "ci_95_lower < 0.028 on all 5 instruments; 4/5 instruments negative mean_r",
+  "inference_summary": {
+    "XAUUSD": {
+      "mean_r": -0.109,
+      "ci_95_lower": -0.196,
+      "stat_verdict": "FAIL",
+      "econ_verdict": "FAIL"
+    },
+    "NAS100": {
+      "mean_r": 0.101,
+      "ci_95_lower": 0.017,
+      "stat_verdict": "PASS",
+      "econ_verdict": "FAIL"
+    },
+    "US30": {
+      "mean_r": -0.011,
+      "ci_95_lower": -0.094,
+      "stat_verdict": "FAIL",
+      "econ_verdict": "FAIL"
+    },
+    "EURUSD": {
+      "mean_r": -0.498,
+      "ci_95_lower": -0.509,
+      "stat_verdict": "PASS",
+      "econ_verdict": "FAIL"
+    },
+    "GBPUSD": {
+      "mean_r": -0.496,
+      "ci_95_lower": -0.504,
+      "stat_verdict": "PASS",
+      "econ_verdict": "FAIL"
+    }
+  },
+  "academic_protocol": {
+    "version": 1,
+    "preregistration_file": "quantresearch/pipelines/hyp003_preregistration.json",
+    "pre_registration_status": "locked_before_run",
+    "pre_registration_valid": true,
+    "pre_registration_locked_at_utc": "2026-05-04T09:27:53Z",
+    "run_start_utc": "2026-05-04T09:58:27.576964Z"
+  }
+}
