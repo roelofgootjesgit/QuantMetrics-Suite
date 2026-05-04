@@ -87,10 +87,15 @@ def validate_preregistration_v1(
             errs.append("pre_registration_valid true is incompatible with retrospective_reconstruction")
         if not data.get("locked_at_utc"):
             errs.append("locked_at_utc required when pre_registration_valid is true")
-        if not run_start_utc or not str(run_start_utc).strip():
+        # run_start_utc: optional while status is locked_before_run and no run has started yet
+        run_rs = (run_start_utc and str(run_start_utc).strip()) or (
+            data.get("run_start_utc") and str(data.get("run_start_utc")).strip()
+        )
+        if run_rs:
+            if data.get("locked_at_utc") and not validate_temporal_integrity(data, str(run_rs)):
+                errs.append("temporal integrity failed: locked_at_utc must be strictly before run_start_utc")
+        elif status != "locked_before_run":
             errs.append("run_start_utc required when pre_registration_valid is true (for temporal integrity)")
-        elif data.get("locked_at_utc") and not validate_temporal_integrity(data, str(run_start_utc)):
-            errs.append("temporal integrity failed: locked_at_utc must be strictly before run_start_utc")
 
     if (
         isinstance(pv, bool)

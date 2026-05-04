@@ -115,6 +115,27 @@ def test_locked_before_run_valid_passes():
     assert validate_preregistration_v1(d, run_start_utc="2026-05-03T12:00:00Z") == []
 
 
+def test_locked_before_run_valid_passes_without_run_start_yet():
+    """True pre-reg filed before any QuantBuild run: no run_start_utc available."""
+    d = {
+        "version": 1,
+        "hypothesis_id": "HYP-003",
+        "pre_registration_timestamp_utc": "2026-05-04T12:00:00Z",
+        "pre_registration_status": "locked_before_run",
+        "pre_registration_valid": True,
+        "note": "locked before engine exists",
+        "null_hypothesis_H0": "h0",
+        "alternative_hypothesis_H1": "h1",
+        "alpha": 0.05,
+        "minimum_n": 1000,
+        "minimum_effect_size_r": 0.028,
+        "test_plan_summary": "Wilcoxon; bootstrap 10k",
+        "locked_at_utc": "2026-05-04T12:00:00Z",
+        "run_start_utc": None,
+    }
+    assert validate_preregistration_v1(d, run_start_utc=None) == []
+
+
 def test_retrospective_but_lock_before_run_inconsistent():
     d = {
         "version": 1,

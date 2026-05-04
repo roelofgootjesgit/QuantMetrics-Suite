@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "experiment_id": "EXP-003",
+  "hypothesis_id": "HYP-003",
+  "pre_registration_timestamp_utc": "2026-05-04T09:27:53Z",
+  "pre_registration_status": "locked_before_run",
+  "pre_registration_valid": true,
+  "locked_at_utc": "2026-05-04T09:27:53Z",
+  "run_start_utc": null,
+  "harking_note": "Alle parameters vastgelegd vóór data-inspectie op H1 overlap breakout data.",
+  "note": "London/NY overlap H1 continuation breakout — true pre-registration locked before first QuantBuild engine run (EXP-003). Engine implementation follows in QuantBuild; data layer H1 + 5 symbols available via parquet cache.",
+  "mechanistic_basis": "London/NY overlap (13:30–16:00 UTC) is the most liquid daily window. The first H1 candle after 13:30 UTC absorbs initial order flow from both sessions. A close outside that range on the next H1 candle signals that dominant order flow has chosen a direction — continuation is the expected outcome, not reversal. Distinct from HYP-002 (reversal after sweep).",
+  "null_hypothesis_H0": "A close outside the first H1 candle range after 13:30 UTC does not generate positive expected value on the five specified instruments over a 5-year window. Formally: expectancy_r ≤ 0 and ci_95_lower < 0.028 (combined and per gate definitions below).",
+  "alternative_hypothesis_H1": "A close outside that range generates positive expected value visible in ci_95_lower ≥ 0.028 AND profit_factor ≥ 1.5 over the full 5-year window on the combined dataset (dual economic gate).",
+  "alpha": 0.05,
+  "minimum_n": 1000,
+  "minimum_n_per_instrument": 200,
+  "minimum_effect_size_r": 0.028,
+  "minimum_profit_factor": 1.5,
+  "bootstrap_iterations": 10000,
+  "bootstrap_seed": 42,
+  "primary_test": "wilcoxon_signed_rank",
+  "setup_definition": {
+    "range_candle": "First full H1 candle with open >= 13:30:00 UTC (calendar day)",
+    "range_high": "high of that candle",
+    "range_low": "low of that candle",
+    "breakout_long": "close of next H1 candle > range_high (strict)",
+    "breakout_short": "close of next H1 candle < range_low (strict)",
+    "entry": "open of the H1 candle after the breakout candle",
+    "sl_long": "range_low",
+    "sl_short": "range_high",
+    "tp": "entry ± 1.5 × (range_high - range_low); RR structure ≥ 1:1.5",
+    "filters": "London/NY overlap session days only; skip entries on major news days (NFP, FOMC, CPI) via boolean in config",
+    "ambiguity_rule": "One entry per instrument per day; if both directions break same calendar day — no entry (skip)"
+  },
+  "instruments": [
+    {
+      "symbol": "XAUUSD",
+      "role": "primary",
+      "mock_spread": 0.5
+    },
+    {
+      "symbol": "NAS100",
+      "role": "indices",
+      "mock_spread": 1.0
+    },
+    {
+      "symbol": "US30",
+      "role": "indices_validation",
+      "mock_spread": 1.0
+    },
+    {
+      "symbol": "EURUSD",
+      "role": "fx_major",
+      "mock_spread": 0.3
+    },
+    {
+      "symbol": "GBPUSD",
+      "role": "fx_major",
+      "mock_spread": 0.4
+    }
+  ],
+  "data_window": {
+    "start": "2021-01-01",
+    "end": "2025-12-31",
+    "timeframe": "1h",
+    "session_open_utc": "13:30"
+  },
+  "economic_gates": {
+    "gate_b1_ci": "ci_95_lower ≥ 0.028",
+    "gate_b2_pf": "profit_factor ≥ 1.5",
+    "both_required": true
+  },
+  "falsification_criteria": {
+    "reject_if": [
+      "ci_95_lower < 0.028 on combined dataset",
+      "OR profit_factor < 1.50 on combined dataset",
+      "OR more than 3 of 5 instruments individually economic FAIL"
+    ],
+    "validation_required_if": [
+      "combined PASS but fewer than 3 instruments individually PASS",
+      "OR combined n < minimum_n (1000)"
+    ],
+    "promote_candidate_if": [
+      "combined ci_95_lower ≥ 0.028",
+      "AND combined profit_factor ≥ 1.50",
+      "AND ≥ 3 of 5 instruments individually PASS"
+    ]
+  },
+  "test_plan_summary": "Per instrument and combined: inferential layer aligned with suite — Wilcoxon signed-rank vs 0 where applicable; bootstrap 95% CI on mean R with seed 42 and 10k iterations; Cohen d / effect interpretation as in inference_v1; dual gate ci_95_lower vs 0.028 and profit_factor vs 1.5. Requires per-trade R series from QuantBuild/QuantLog after london_ny_overlap_breakout engine exists."
+}
