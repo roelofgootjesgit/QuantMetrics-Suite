@@ -1,0 +1,13 @@
+{
+  "run_id": "qb_run_20260504T101542Z_2e0697e3",
+  "experiment_id": "EXP-003",
+  "role": "variant",
+  "collected_at_utc": "2026-05-04T10:21:27.271781Z",
+  "quantbuild_root": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild",
+  "quantlog_source": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild\\data\\quantlog_events\\runs\\qb_run_20260504T101542Z_2e0697e3.jsonl",
+  "config_snapshot": "config_snapshot.yaml",
+  "config_source_path": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild\\configs\\experiments\\exp003_overlap_breakout\\GBPUSD.yaml",
+  "resolved_config": "resolved_config.yaml",
+  "resolved_config_source_path": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild\\data\\quantlog_events\\runs\\qb_run_20260504T101542Z_2e0697e3_resolved.yaml",
+  "analytics_files_copied": 0
+}
