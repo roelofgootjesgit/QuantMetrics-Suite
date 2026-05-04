@@ -15,6 +15,14 @@ def test_hyp002_preregistration_file_validates_with_pipeline_run_time():
     assert validate_preregistration_v1(data, run_start_utc="2026-05-03T18:42:39.640992Z") == []
 
 
+def test_hyp003_preregistration_file_validates_before_first_run():
+    p = repo_root() / "pipelines" / "hyp003_preregistration.json"
+    data = load_preregistration(p)
+    assert data.get("pre_registration_status") == "locked_before_run"
+    assert data.get("run_start_utc") is None
+    assert validate_preregistration_v1(data, run_start_utc=None) == []
+
+
 def test_validate_temporal_integrity_true_when_lock_before_run():
     prereg = {
         "locked_at_utc": "2026-05-01T10:00:00Z",
