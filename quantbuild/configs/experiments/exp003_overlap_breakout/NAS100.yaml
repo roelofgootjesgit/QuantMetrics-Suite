@@ -1,0 +1,29 @@
+strategy:
+  name: london_ny_overlap_breakout
+backtest:
+  engine: london_ny_overlap_breakout
+  start_date: "2021-01-01"
+  end_date: "2025-12-31"
+symbol: NAS100
+timeframes:
+  - 1h
+session_open_utc: "13:30"
+tp_multiplier: 1.5
+mock_spread: 1.0
+major_news_filter: true
+experiment_id: EXP-003
+
+data:
+  base_path: data/market_cache
+
+broker:
+  mock_spread: 1.0
+
+quantlog:
+  enabled: true
+  auto_analytics: true
+
+artifacts:
+  enabled: true
+  experiment_id: EXP-003
+  role: variant
