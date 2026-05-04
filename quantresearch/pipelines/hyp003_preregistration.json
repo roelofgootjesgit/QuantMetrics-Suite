@@ -6,7 +6,7 @@
   "pre_registration_status": "locked_before_run",
   "pre_registration_valid": true,
   "locked_at_utc": "2026-05-04T09:27:53Z",
-  "run_start_utc": null,
+  "run_start_utc": "2026-05-04T09:58:27.576964Z",
   "harking_note": "Alle parameters vastgelegd vóór data-inspectie op H1 overlap breakout data.",
   "note": "London/NY overlap H1 continuation breakout — true pre-registration locked before first QuantBuild engine run (EXP-003). Engine implementation follows in QuantBuild; data layer H1 + 5 symbols available via parquet cache.",
   "mechanistic_basis": "London/NY overlap (13:30–16:00 UTC) is the most liquid daily window. The first H1 candle after 13:30 UTC absorbs initial order flow from both sessions. A close outside that range on the next H1 candle signals that dominant order flow has chosen a direction — continuation is the expected outcome, not reversal. Distinct from HYP-002 (reversal after sweep).",
