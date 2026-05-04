@@ -92,6 +92,8 @@ def collect(
             dest_name = p.name
             if p.name.endswith("_inference_report.json"):
                 dest_name = "inference_report.json"
+            elif p.name.endswith("_mfe_timing_report.json"):
+                dest_name = "mfe_timing_report.json"
             shutil.copy2(p, analytics_dir / dest_name)
             analytics_copied += 1
             if analytics_copied >= 40:
