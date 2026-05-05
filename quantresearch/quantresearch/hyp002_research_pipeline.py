@@ -194,6 +194,7 @@ def _write_exp002_experiment_ledger_folder(
     """Ledger v1 layout under ``experiments/EXP-002/`` (validate + dossier CLI)."""
     exp_dir = experiments_dir() / "EXP-002"
     exp_dir.mkdir(parents=True, exist_ok=True)
+    existing_exp_json = _load_existing_experiment_json(exp_dir)
     bid = str(bundle.get("bundle_id", "hyp002-v5a-expansion-block-closed-2026"))
     run_rel = f"quantresearch/runs/{bid}".replace("\\", "/")
     suite_posix = str(suite_root.resolve()).replace("\\", "/")
@@ -266,17 +267,27 @@ def _write_exp002_experiment_ledger_folder(
     exp_json["academic_status"] = "PENDING"
     exp_json["effective_status"] = "GOVERNANCE_ONLY — not academically validated"
     inf_md: dict[str, Any] | None = load_inference_report_from_dir(exp_dir)
+    inference_applied = False
     if manifest and bool(manifest.get("inference_consumer")) and inf_md is not None and prereg:
         upd = apply_inference_to_experiment("EXP-002", prereg, inf_md)
         exp_json["academic_status"] = upd["academic_status"]
         exp_json["effective_status"] = upd["effective_status"]
         if upd.get("inference_reason"):
             exp_json["inference_reason"] = upd["inference_reason"]
+        inference_applied = True
+    elif existing_exp_json:
+        _preserve_existing_academic_verdict(exp_json, existing_exp_json)
     if prereg:
+        existing_protocol = existing_exp_json.get("academic_protocol")
+        existing_infer_stats = None
+        if isinstance(existing_protocol, dict):
+            raw_infer_stats = existing_protocol.get("inferential_statistics")
+            if isinstance(raw_infer_stats, str) and raw_infer_stats.strip():
+                existing_infer_stats = raw_infer_stats
         infer_stats = (
             "applied"
-            if (bool(manifest and manifest.get("inference_consumer")) and inf_md is not None and prereg)
-            else "pending"
+            if inference_applied
+            else (existing_infer_stats or "pending")
         )
         exp_json["academic_protocol"] = {
             "version": 1,
@@ -394,6 +405,23 @@ def _write_exp002_experiment_ledger_folder(
         logger.warning("write_research_index failed after EXP-002 ledger write", exc_info=True)
 
     return exp_dir
+
+
+def _load_existing_experiment_json(exp_dir: Path) -> dict[str, Any]:
+    p = exp_dir / "experiment.json"
+    if not p.is_file():
+        return {}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"experiment.json must contain an object: {p}")
+    return data
+
+
+def _preserve_existing_academic_verdict(exp_json: dict[str, Any], existing_exp_json: dict[str, Any]) -> None:
+    """Keep an already-consumed inference verdict when this run is not consuming inference."""
+    for key in ("academic_status", "effective_status", "inference_reason"):
+        if key in existing_exp_json:
+            exp_json[key] = existing_exp_json[key]
 
 
 def _r3(value: Any) -> float | None:
