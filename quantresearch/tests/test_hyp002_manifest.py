@@ -53,8 +53,18 @@ def test_hyp002_ledger_rerun_preserves_consumed_inference_verdict(tmp_path, monk
     prereg = {
         "version": 1,
         "hypothesis_id": "HYP-002",
+        "pre_registration_timestamp_utc": "2026-05-04T10:00:00Z",
         "pre_registration_status": "retrospective_reconstruction",
         "pre_registration_valid": False,
+        "note": "retrospective fixture",
+        "null_hypothesis_H0": "median R <= 0",
+        "alternative_hypothesis_H1": "median R > 0",
+        "alpha": 0.05,
+        "minimum_n": 300,
+        "minimum_effect_size_r": 0.028,
+        "target_power": 0.8,
+        "test_plan_summary": "test plan",
+        "locked_at_utc": "2026-05-04T10:00:00Z",
     }
     monkeypatch.setenv("QUANTRESEARCH_ROOT", str(qr_root))
     monkeypatch.setattr("quantresearch.hyp002_research_pipeline._load_hyp002_preregistration_for_ledger", lambda bundle: prereg)
