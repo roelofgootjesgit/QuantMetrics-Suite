@@ -1,57 +1,152 @@
 # quantlog
 
-## SYSTEM IDENTITY
+Event backbone for the QuantMetrics Suite. Append-only JSONL event store with schema validation, deterministic trace replay, ingest health monitoring, and quality scoring. The canonical correlation layer across all modules.
 
-This module is part of the QuantMetrics suite.
-- Canonical name: `quantlog`
-- Role: Event Backbone
-
-`quantlog` is the observability truth layer for the suite: append-only JSONL events, replay, validation, and quality scoring.
+This is an event spine, not a BI platform.
 
 ---
 
-## Core responsibility
+## Role in the suite
 
-- Canonical event envelope across systems.
-- Append-only JSONL event store.
-- Deterministic trace replay.
-- Schema and payload contract validation.
-- Daily metrics summary.
-- Ingest health checks with `audit_gap_detected` support.
+```
+quantbuild / quantbridge  →  quantlog  →  quantanalytics  →  quantresearch / promotion gates
+```
 
-Data flow: `quantbuild` / `quantbridge` -> `quantlog` -> `quantanalytics`.
+`quantlog` enforces and preserves correlation identifiers emitted by upstream producers. Because these fields are validated in one place, downstream modules can do deterministic replay, analytics, and promotion checks without bespoke glue logic.
 
-This repository is intentionally an event spine, not a BI platform.
+---
 
-## Correlation with the total system
+## Architecture
 
-`quantlog` is the canonical correlation layer across modules.
-It enforces and preserves identifiers emitted by producers:
+```mermaid
+flowchart TD
 
-- `run_id`, `session_id`, `trace_id` for run/session/trace scope
-- `decision_cycle_id` for decision-chain integrity
-- `trade_id` and `order_ref` for execution/lifecycle linkage
+    %% ── PRODUCERS ───────────────────────────────────────────
+    subgraph PROD["Upstream producers"]
+        QB["quantbuild\nsignal_detected · signal_evaluated\nrisk_guard_decision · trade_action\nsignal_filtered · NO_ACTION"]
+        QBR["quantbridge\norder_filled · order_rejected\ntrade_opened · trade_closed"]
+    end
 
-Because these fields are validated in one place, downstream modules can do deterministic replay, analytics, and promotion checks without bespoke glue logic.
+    %% ── INGEST ───────────────────────────────────────────────
+    subgraph ING["ingest/"]
+        EMIT["Event Emitter\ncanonical envelope\nevent_id · event_type · event_version\ntimestamp_utc · ingested_at_utc\nsource_system · source_component\nenvironment · severity"]
+        CORR["Correlation fields\nrun_id · session_id · trace_id\ndecision_cycle_id · trade_id · order_ref"]
+        HEALTH["Ingest Health Check\ngap detection · audit_gap_detected\n--max-gap-seconds"]
+    end
+
+    QB  --> EMIT
+    QBR --> EMIT
+    EMIT --> CORR
+    EMIT --> HEALTH
+
+    %% ── STORE ────────────────────────────────────────────────
+    subgraph STORE["events/ — append-only JSONL"]
+        RAW["quantlog_events.jsonl\nimmutable · ordered by\ntimestamp_utc → source_seq\n→ ingested_at_utc"]
+    end
+
+    CORR --> RAW
+
+    %% ── VALIDATE ─────────────────────────────────────────────
+    subgraph VAL["validate/"]
+        SCHEMA["Schema validator\nenvelope field presence\npayload contract per event_type"]
+        ENV["Environment enum\npaper · dry_run · live · shadow"]
+        DEC["Decision semantics\nrisk_guard_decision: ALLOW · BLOCK · REDUCE · DELAY\ntrade_action: ENTER · EXIT · REVERSE · NO_ACTION"]
+        ISSUES["Issue reporting\nerrors_by_code · warnings_by_code\nnon_contract_event_types penalty"]
+    end
+
+    RAW --> SCHEMA
+    SCHEMA --> ENV
+    SCHEMA --> DEC
+    SCHEMA --> ISSUES
+
+    %% ── REPLAY ───────────────────────────────────────────────
+    subgraph REPLAY["replay/"]
+        TRACE["Trace Replay Service\nreplay by trace_id\ndeterministic ordering"]
+    end
+
+    RAW --> TRACE
+
+    %% ── SUMMARIZE ────────────────────────────────────────────
+    subgraph SUM["summarize/"]
+        DAY["Daily Summary\nby_event_type · by_severity\nby_source_system · by_source_component\nby_environment"]
+        HIST["Decision histograms\nno_action_by_reason\ntrade_action_by_decision\nrisk_guard_blocks_by_guard\nsignal_filtered_by_reason"]
+        UNIQ["Unique ID counts\ncount_unique_run_ids\ncount_unique_session_ids\ncount_unique_trace_ids"]
+        SCORE["Quality Scorecard\npass_threshold configurable\npenalty for non_contract_event_types"]
+    end
+
+    RAW   --> DAY
+    DAY   --> HIST
+    DAY   --> UNIQ
+    HIST  --> SCORE
+    ISSUES --> SCORE
+
+    %% ── CLI ──────────────────────────────────────────────────
+    subgraph CLI["cli.py"]
+        C1["validate-events"]
+        C2["replay-trace"]
+        C3["summarize-day"]
+        C4["check-ingest-health"]
+        C5["score-run"]
+        C6["list-event-types · list-no-action-reasons\nlist-envelope-schema · export-v1-schema"]
+    end
+
+    SCHEMA --> C1
+    TRACE  --> C2
+    DAY    --> C3
+    HEALTH --> C4
+    SCORE  --> C5
+    RAW    --> C6
+
+    %% ── DOWNSTREAM ───────────────────────────────────────────
+    subgraph DOWN["Downstream"]
+        QA["quantanalytics\nread-only replay\nfunnel · guard attribution · verdict"]
+        QR["quantresearch\nbaseline vs candidate\npromotion gate"]
+        OS["quantmetrics_os\nrun artifact store"]
+    end
+
+    RAW   --> QA
+    SCORE --> OS
+    QA    --> QR
+```
 
 ---
 
 ## Core contracts
 
-- **Required envelope fields**: `event_id`, `event_type`, `event_version`, `timestamp_utc`, `ingested_at_utc`, `source_system`, `source_component`, `environment`, `run_id`, `session_id`, `source_seq`, `trace_id`, `severity`, `payload`
-- **Environment enum**: `paper|dry_run|live|shadow`
-- **Decision semantics**
-  - `risk_guard_decision.decision`: `ALLOW|BLOCK|REDUCE|DELAY`
-  - `trade_action.decision`: `ENTER|EXIT|REVERSE|NO_ACTION`
-- **Replay ordering**: `timestamp_utc` -> `source_seq` -> `ingested_at_utc`
+**Required envelope fields** — present on every event:
 
-See [docs/EVENT_SCHEMA.md](docs/EVENT_SCHEMA.md) for full schema and examples. **Index:** [docs/README.md](docs/README.md).
+`event_id` · `event_type` · `event_version` · `timestamp_utc` · `ingested_at_utc` · `source_system` · `source_component` · `environment` · `run_id` · `session_id` · `source_seq` · `trace_id` · `severity` · `payload`
+
+**Environment enum:** `paper` · `dry_run` · `live` · `shadow`
+
+**Decision semantics:**
+
+| Field | Allowed values |
+|---|---|
+| `risk_guard_decision.decision` | `ALLOW` · `BLOCK` · `REDUCE` · `DELAY` |
+| `trade_action.decision` | `ENTER` · `EXIT` · `REVERSE` · `NO_ACTION` |
+
+**Replay ordering:** `timestamp_utc` → `source_seq` → `ingested_at_utc`
+
+---
+
+## Correlation contract
+
+`quantlog` is the canonical correlation layer. It enforces identifiers emitted by upstream producers so downstream modules get deterministic replay and attribution without bespoke glue logic.
+
+| Key | Scope |
+|---|---|
+| `run_id` | One run artifact set |
+| `session_id` | Related runtime sessions inside a run |
+| `trace_id` | End-to-end execution traces |
+| `decision_cycle_id` | Decision-chain integrity (`signal_detected` → `trade_action`) |
+| `trade_id` / `order_ref` | Execution and lifecycle linkage |
 
 ---
 
 ## Repository layout
 
-```text
+```
 quantlog/
 ├── src/quantlog/
 │   ├── events/       schema + io
@@ -64,15 +159,15 @@ quantlog/
 ├── tests/            unit tests
 ├── data/events/      sample/generated event files
 ├── configs/          schema registry
-└── docs/             all Markdown documentation (index: docs/README.md)
+└── docs/             full documentation index at docs/README.md
 ```
 
 ---
 
-## Quickstart (Windows PowerShell)
+## Quick start
 
 ```powershell
-cd "c:\Users\Gebruiker\quantlog"
+cd quantlog
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install -e .
@@ -80,97 +175,33 @@ python -m pip install -e .
 
 ---
 
-## CLI commands
+## CLI reference
 
-Validate events:
+| Command | Purpose |
+|---|---|
+| `validate-events --path <dir>` | Schema and contract validation, returns `errors_by_code` and `warnings_by_code` |
+| `replay-trace --path <dir> --trace-id <id>` | Deterministic replay of one trace |
+| `summarize-day --path <dir>` | Daily summary with decision histograms and unique ID counts |
+| `check-ingest-health --path <dir> --max-gap-seconds <n>` | Gap detection, optional `--emit-audit-gap` |
+| `score-run --path <dir> --pass-threshold <n>` | Quality scorecard, includes throughput histograms |
+| `list-event-types` | v1 contract event types and required payload keys |
+| `list-no-action-reasons` | Canonical `NO_ACTION` payload reasons for `quantbuild` emitters |
+| `list-envelope-schema` | Required envelope fields, allowed enums and decision values |
+| `export-v1-schema` | Full v1 schema as JSON for docs/codegen |
 
-```powershell
-python -m quantlog.cli validate-events --path data/events/sample
-```
-
-Replay one trace:
-
-```powershell
-python -m quantlog.cli replay-trace --path data/events/sample --trace-id trace_demo_1
-```
-
-Summarize event day/folder:
-
-```powershell
-python -m quantlog.cli summarize-day --path data/events/sample
-```
-
-The JSON output includes `no_action_by_reason` and `trade_action_by_decision` (NO_ACTION histogram) plus `risk_guard_blocks_by_guard` for guard funnel analysis.
-
-`validate-events` also returns `errors_by_code` and `warnings_by_code` (aggregated issue message prefixes).
-
-Check ingest health:
-
-```powershell
-python -m quantlog.cli check-ingest-health --path data/events/sample --max-gap-seconds 120
-```
-
-Emit `audit_gap_detected` events for detected gaps:
-
-```powershell
-python -m quantlog.cli check-ingest-health --path data/events/sample --max-gap-seconds 120 --emit-audit-gap
-```
-
-Run quality scorecard:
-
-```powershell
-python -m quantlog.cli score-run --path data/events/sample --max-gap-seconds 300 --pass-threshold 95
-```
-
-`score-run` includes the same throughput histograms as `summarize-day` (`no_action_by_reason`, `trade_action_by_decision`, `risk_guard_blocks_by_guard`, `trades_attempted`, …) next to the quality score.
-
-Nightly-style chain (same four steps, exit code reflects worst failure):
+Nightly chain (validate → replay → summarize → score, exit code reflects worst failure):
 
 ```powershell
 powershell -File scripts/nightly_quantlog_report.ps1 -Path data/events/sample
 ```
 
-On Linux/VPS:
-
 ```bash
-bash scripts/nightly_quantlog_report.sh data/events/sample
+bash scripts/nightly_quantlog_report.sh data/events/sample   # Linux/VPS
 ```
-
-Canonical `NO_ACTION` payload reasons (for **quantbuild** emitters):
-
-```powershell
-python -m quantlog.cli list-no-action-reasons
-```
-
-v1 `event_type` names and required payload keys:
-
-```powershell
-python -m quantlog.cli list-event-types
-```
-
-Required envelope fields plus allowed `severity` / `environment` / `source_system` (and decision enums):
-
-```powershell
-python -m quantlog.cli list-envelope-schema
-```
-
-All of the above in one JSON (for docs/codegen):
-
-```powershell
-python -m quantlog.cli export-v1-schema
-```
-
-`summarize-day` and `score-run` also include `by_severity`, `by_source_system`, `by_source_component`, and `by_environment` next to `by_event_type`.
-
-`non_contract_event_types` counts `event_type` strings that are **not** in the v1 contract (`list-event-types`). The quality score applies a small penalty when any are present.
-
-**quantbuild** pipeline (edge decomposition): contract types `signal_detected`, `signal_filtered`, `trade_executed` — see `docs/EVENT_SCHEMA.md`. `summarize-day` adds `signal_filtered_by_reason` (histogram op canonieke `filter_reason`).
-
-`summarize-day` and `score-run` include `count_unique_run_ids`, `count_unique_session_ids`, and `count_unique_trace_ids` (distinct non-empty envelope values) to spot merged folders or multi-run days.
 
 ---
 
-## Build and test workflows
+## Testing and synthetic data
 
 Unit tests:
 
@@ -178,31 +209,31 @@ Unit tests:
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-End-to-end acceptance smoke:
+End-to-end smoke:
 
 ```powershell
 python scripts/smoke_end_to_end.py
 ```
 
-Generate synthetic sample day:
+Generate a synthetic sample day:
 
 ```powershell
-python scripts/generate_sample_day.py --output-path data/events/generated --date 2026-03-29 --traces 25
-python -m quantlog.cli validate-events --path data/events/generated/2026-03-29
-python -m quantlog.cli summarize-day --path data/events/generated/2026-03-29
+python scripts/generate_sample_day.py \
+  --output-path data/events/generated \
+  --date 2026-03-29 \
+  --traces 25
 ```
 
-Generate expanded scenarios:
+Generate with anomalies for negative quality tests:
 
 ```powershell
-python scripts/generate_sample_day.py --output-path data/events/generated --date 2026-03-29 --traces 50 --include-session-restart-probe
-```
+python scripts/generate_sample_day.py \
+  --output-path data/events/generated \
+  --date 2026-03-29 --traces 25 --inject-anomalies
 
-Generate anomaly day for negative quality tests:
-
-```powershell
-python scripts/generate_sample_day.py --output-path data/events/generated --date 2026-03-29 --traces 25 --inject-anomalies
-python -m quantlog.cli score-run --path data/events/generated/2026-03-29 --pass-threshold 95
+python -m quantlog.cli score-run \
+  --path data/events/generated/2026-03-29 \
+  --pass-threshold 95
 ```
 
 Contract integration check:
@@ -219,33 +250,32 @@ Local CI gates:
 
 ---
 
-## Suite repositories (GitHub)
+## Documentation
 
-| Repo | Remote |
-| --- | --- |
+All docs live under `docs/`. Start at [`docs/README.md`](docs/README.md) for the full index.
+
+| Document | Purpose |
+|---|---|
+| [`docs/EVENT_SCHEMA.md`](docs/EVENT_SCHEMA.md) | Canonical schema and payload definitions |
+| [`docs/QUANTLOG_V1_ARCHITECTURE.md`](docs/QUANTLOG_V1_ARCHITECTURE.md) | Architecture and MVP boundaries |
+| [`docs/EVENT_VERSIONING_POLICY.md`](docs/EVENT_VERSIONING_POLICY.md) | Schema/version compatibility policy |
+| [`docs/QUANTLOG_GUARDRAILS.md`](docs/QUANTLOG_GUARDRAILS.md) | Scope boundaries and non-negotiables |
+| [`docs/SCHEMA_CHANGE_CHECKLIST.md`](docs/SCHEMA_CHANGE_CHECKLIST.md) | Checklist for schema changes |
+| [`docs/REPLAY_RUNBOOK.md`](docs/REPLAY_RUNBOOK.md) | Incident/replay/ops procedures |
+| [`docs/QUANTBUILD_QUANTLOG_INTEGRATION_PLAN.md`](docs/QUANTBUILD_QUANTLOG_INTEGRATION_PLAN.md) | Integration plan dry-run → full stack |
+| [`docs/QUANT_STACK_INTEGRATION_ACCEPTANCE.md`](docs/QUANT_STACK_INTEGRATION_ACCEPTANCE.md) | Stack acceptance dossier |
+| [`docs/VPS_SYNC.md`](docs/VPS_SYNC.md) | VPS sync workflow |
+| [`docs/ROADMAP_EXECUTION_STATUS.md`](docs/ROADMAP_EXECUTION_STATUS.md) | Roadmap and completion log |
+
+---
+
+## Suite repositories
+
+| Module | Repository |
+|---|---|
 | `quantmetrics_os` | [roelofgootjesgit/quantmetrics_os](https://github.com/roelofgootjesgit/quantmetrics_os) |
 | `quantbuild` | [roelofgootjesgit/QuantBuild-Signal-Engine](https://github.com/roelofgootjesgit/QuantBuild-Signal-Engine) |
 | `quantbridge` | canonical module: `quantbridge` |
 | `quantlog` (**this**) | canonical module: `quantlog` |
 | `quantanalytics` | canonical module: `quantanalytics` |
-
----
-
-## Documentation
-
-All Markdown files live under **`docs/`**. Start at **[docs/README.md](docs/README.md)** for the full index.
-
-Highlights:
-
-- [docs/QUANTLOG_V1_ARCHITECTURE.md](docs/QUANTLOG_V1_ARCHITECTURE.md) — architecture and MVP boundaries
-- [docs/EVENT_SCHEMA.md](docs/EVENT_SCHEMA.md) — canonical schema and payload definitions
-- [docs/EVENT_VERSIONING_POLICY.md](docs/EVENT_VERSIONING_POLICY.md) — schema/version compatibility policy
-- [docs/QUANTLOG_GUARDRAILS.md](docs/QUANTLOG_GUARDRAILS.md) — scope boundaries and non-negotiables
-- [docs/SCHEMA_CHANGE_CHECKLIST.md](docs/SCHEMA_CHANGE_CHECKLIST.md) — checklist for schema changes
-- [docs/REPLAY_RUNBOOK.md](docs/REPLAY_RUNBOOK.md) — incident/replay/ops procedures
-- [docs/MENTOR_UPDATE.md](docs/MENTOR_UPDATE.md) — engineering status and next-phase direction
-- [docs/ROADMAP_EXECUTION_STATUS.md](docs/ROADMAP_EXECUTION_STATUS.md) — roadmap status and completion log
-- [docs/QUANTBUILD_QUANTLOG_INTEGRATION_PLAN.md](docs/QUANTBUILD_QUANTLOG_INTEGRATION_PLAN.md) — integration plan (dry-run → full stack)
-- [docs/QUANT_STACK_INTEGRATION_ACCEPTANCE.md](docs/QUANT_STACK_INTEGRATION_ACCEPTANCE.md) — stack acceptance dossier (001 / 002)
-- [docs/VPS_SYNC.md](docs/VPS_SYNC.md) — VPS: zelfde venv/pull-workflow als **quantbuild** (`VPS_MULTI_MODULE` + Operator Cheatsheet), **quantlog** als derde repo
-- [docs/QUANTLOG_UITLEG.md](docs/QUANTLOG_UITLEG.md) / [docs/QUANTLOG_SOFTWARE.md](docs/QUANTLOG_SOFTWARE.md) — NL / software overview
+| `quantresearch` | canonical module: `quantresearch` |
