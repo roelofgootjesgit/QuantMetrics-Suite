@@ -1,286 +1,276 @@
 # quantbridge
 
-## SYSTEM IDENTITY
+Execution engine for the QuantMetrics Suite. Handles broker execution, routing, and runtime safeguards while keeping strategy logic out of the broker layer. Broker differences stay in the adapter and transport layers — strategy code contains no broker API calls.
 
-This module is part of the QuantMetrics suite.
-- Canonical name: `quantbridge`
-- Role: Execution Engine
-
-`quantbridge` handles broker execution, routing, and runtime safeguards while keeping strategy logic out of the broker layer.
+Design boundary: `quantbuild` decides. `quantbridge` executes.
 
 ---
 
-## Core responsibility
+## Role in the suite
 
-- Keep execution broker-agnostic via adapters and a canonical contract.
-- Provide runtime safety (health, reconciliation, lifecycle checks, risk gates).
-- Support account governance and policy-based account selection.
-- Emit structured observability events for operations and analysis.
-
-Execution chain:
-
-```text
-decision -> risk gate -> router -> broker adapter -> broker API -> execution result
+```
+quantbuild  →  quantbridge  →  quantlog  →  quantanalytics  →  quantresearch
+                    ↓
+              broker API (cTrader / mock)
 ```
 
-## Correlation with the total system
+`quantbridge` consumes `decision_cycle_id` and `trade_id` from upstream and emits execution events with `order_ref`, `trade_id`, `run_id`, `session_id`, and `trace_id`. This enables `quantlog` to validate cross-event linkage, `quantanalytics` to measure `action → filled` outcomes, and `quantresearch` to compare execution results across runs.
 
-`quantbridge` executes decisions while preserving suite-level correlation keys:
+---
 
-- consumes `decision_cycle_id` / `trade_id` from upstream decision flow
-- emits execution events with `order_ref`, `trade_id`, `run_id`, `session_id`, `trace_id`
-- keeps broker-specific IDs mapped to canonical event fields
+## Architecture
 
-This enables:
+```mermaid
+flowchart TD
 
-- `quantlog` to validate cross-event linkage and monotonic execution traces
-- `quantanalytics` to measure action -> filled outcomes and execution bottlenecks
-- `quantresearch` to compare outcome changes without losing execution context
+    %% ── INPUT ───────────────────────────────────────────────
+    subgraph IN["Upstream — quantbuild"]
+        DEC["trade_action event\ndecision_cycle_id · trade_id\nrun_id · session_id · trace_id"]
+    end
+
+    %% ── RISK GATE ────────────────────────────────────────────
+    subgraph RG["risk/"]
+        RGATE["Risk Engine\ndaily_dd_limit_pct\ntotal_dd_limit_pct\nmax_open_risk_pct\nmax_risk_per_trade_pct\nmax_concurrent_positions"]
+        PROP["Prop Guard\nprop-style rule enforcement"]
+        ALIM["Account Limits\nper-account exposure caps"]
+    end
+
+    DEC --> RGATE
+    RGATE --> PROP
+    PROP --> ALIM
+
+    %% ── ROUTER ───────────────────────────────────────────────
+    subgraph ROUTER["router/"]
+        SEL["Account Selector\nprimary · primary_backup · fanout\nhealth-aware routing"]
+        PLAN["Execution Plan Builder\nrouting mode · units · instrument"]
+        ORCH["Execution Orchestrator\ncoordinates multi-account execution"]
+    end
+
+    ALIM --> SEL
+    SEL  --> PLAN
+    PLAN --> ORCH
+
+    %% ── BROKER ADAPTER ───────────────────────────────────────
+    subgraph BROKER["execution/"]
+        CONTRACT["Broker Contract\ncanonical interface\nbroker-agnostic"]
+        CTRADER["cTrader Broker Adapter"]
+        MOCK["Mock Client\nfor regression + smoke"]
+        OPENAPI["cTrader OpenAPI Client"]
+        SYMREG["Symbol Registry"]
+        HEALTH["Health Monitor\nconnect · price · order · close"]
+    end
+
+    ORCH --> CONTRACT
+    CONTRACT --> CTRADER
+    CONTRACT --> MOCK
+    CTRADER --> OPENAPI
+    CTRADER --> SYMREG
+    CTRADER --> HEALTH
+
+    %% ── ACCOUNTS ─────────────────────────────────────────────
+    subgraph ACC["accounts/"]
+        POL["Account Policy\npolicy-based selection rules"]
+        STATE["Account State Machine\nactive · paused · degraded"]
+        STORE["Account State Store\npersistent governance state"]
+    end
+
+    SEL   --> POL
+    POL   --> STATE
+    STATE --> STORE
+
+    %% ── OUTPUT ───────────────────────────────────────────────
+    subgraph OUT["Execution result"]
+        FILL["order_filled / order_rejected\norder_ref · trade_id · run_id\nsession_id · trace_id"]
+        OBS["Observability events\nlogs/events.jsonl"]
+    end
+
+    OPENAPI --> FILL
+    MOCK    --> FILL
+    HEALTH  --> OBS
+    FILL    --> OBS
+
+    %% ── DOWNSTREAM ───────────────────────────────────────────
+    subgraph DOWN["Downstream"]
+        QL["quantlog\ncross-event linkage validation"]
+        QA["quantanalytics\naction → filled measurement"]
+        QR["quantresearch\nexecution comparison across runs"]
+    end
+
+    FILL --> QL
+    QL   --> QA
+    QA   --> QR
+
+    %% ── OPS ──────────────────────────────────────────────────
+    subgraph OPS["ops/ — VPS runtime"]
+        CRON["quantbridge_paper.cron"]
+        SYSTEMD["quantbridge-paper.service"]
+        INSTALL["install_paper_service.sh"]
+    end
+
+    ORCH --> OPS
+```
 
 ---
 
 ## Repository layout
 
-```text
-configs/
-  ctrader_icmarkets_demo.yaml
-  accounts_baseline.yaml
-  suite_profiles.yaml
-docs/
-  ROADMAP.md
-  PAPER_ROLLOUT.md
-scripts/
-  ctrader_smoke.py
-  recover_execution_state.py
-  run_runtime_control.py
-  run_order_lifecycle_check.py
-  run_account_orchestration_check.py
-  run_multi_account_execution_check.py
-  run_vps_paper_cycle.py
-  validate_account_env.py
-  account_control.py
-  rotate_observability_events.py
-  summarize_observability.py
+```
 src/quantbridge/
-  execution/
-    broker_contract.py
-    errors.py
-    health.py
-    models.py
-    symbol_registry.py
-    brokers/
-      ctrader_broker.py
-    clients/
-      ctrader_mock_client.py
-      ctrader_openapi_client.py
-  risk/
-    account_limits.py
-    risk_engine.py
-    prop_guard.py
-  accounts/
-    account_policy.py
-    account_state_store.py
-    account_state_machine.py
-  router/
-    account_selector.py
-    execution_plan_builder.py
-    execution_orchestrator.py
-  ops/
-    observability.py
+├── execution/
+│   ├── broker_contract.py       canonical broker interface
+│   ├── brokers/ctrader_broker.py
+│   ├── clients/
+│   │   ├── ctrader_mock_client.py
+│   │   └── ctrader_openapi_client.py
+│   ├── health.py
+│   ├── models.py
+│   ├── symbol_registry.py
+│   └── errors.py
+├── risk/
+│   ├── risk_engine.py
+│   ├── prop_guard.py
+│   └── account_limits.py
+├── accounts/
+│   ├── account_policy.py
+│   ├── account_state_machine.py
+│   └── account_state_store.py
+└── router/
+    ├── account_selector.py
+    ├── execution_plan_builder.py
+    └── execution_orchestrator.py
+configs/
+├── ctrader_icmarkets_demo.yaml
+├── accounts_baseline.yaml
+└── suite_profiles.yaml
+ops/vps/
+├── quantbridge_paper.cron
+├── quantbridge-paper.service
+└── install_paper_service.sh
+scripts/                         13 operational scripts (see below)
 ```
 
 ---
 
-## Quick Start
+## Scripts reference
 
-1) Create and activate a virtual environment.
-2) Fill `.env` from `.env.example`, then keep machine-specific secrets in `local.env` (preferred at runtime).
-3) Run smoke test in mock mode:
+| Script | Purpose |
+|---|---|
+| `ctrader_smoke.py` | Connect, price, place, close — smoke test in mock or OpenAPI mode |
+| `recover_execution_state.py` | Startup reconnect and state recovery before launching bots |
+| `run_runtime_control.py` | Continuous sync + failsafe control loop |
+| `run_order_lifecycle_check.py` | Submit → confirm fill → protection check |
+| `run_account_orchestration_check.py` | Account selection with health/persistence simulation |
+| `run_multi_account_execution_check.py` | Multi-account routing modes: single, primary_backup, fanout |
+| `run_vps_paper_cycle.py` | VPS startup gate + suite + runtime probe |
+| `run_regression_suite.py` | Full mock regression across all core layers |
+| `validate_account_env.py` | Account policy to ENV linking validation |
+| `account_control.py` | Account governance: status, pause, resume |
+| `rotate_observability_events.py` | Log rotation to archive |
+| `summarize_observability.py` | Observability summary with time window filter |
+| `recover_execution_state.py` | State recovery on restart |
+
+---
+
+## Quick start
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env        # secrets stay in local.env at runtime
+```
+
+Smoke test (mock):
 
 ```bash
 python scripts/ctrader_smoke.py --config configs/ctrader_icmarkets_demo.yaml
 ```
 
-4) Run smoke test in Open API mode:
+Smoke test (OpenAPI):
 
 ```bash
 python scripts/ctrader_smoke.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi
 ```
 
-5) Run startup reconnect + state recovery before launching bots:
+Expected smoke output:
 
-```bash
-python scripts/recover_execution_state.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --registry-path state/positions.json --strategy OCLW
+```json
+{ "connect": true, "price": true, "place_order": true, "close_order": true }
 ```
 
-6) Run runtime control loop (continuous sync + failsafe):
-
-```bash
-python scripts/run_runtime_control.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --registry-path state/positions.json --strategy OCLW
-```
-
-Optional dry run (single poll loop):
-
-```bash
-python scripts/run_runtime_control.py --config configs/ctrader_icmarkets_demo.yaml --mode openapi --max-iterations 1
-```
-
-Optional Telegram alerts:
-- set `TELEGRAM_BOT_TOKEN`
-- set `TELEGRAM_CHAT_ID`
-
-7) Run order lifecycle validation (submit -> confirm fill -> protection check):
-
-```bash
-python scripts/run_order_lifecycle_check.py --config configs/ctrader_icmarkets_demo.yaml --mode mock --direction BUY --sl 2495 --tp 2510 --close-after
-```
-
-Optional risk-gate flags (recommended for prop style checks):
-- `--daily-dd-limit-pct 5`
-- `--total-dd-limit-pct 10`
-- `--max-open-risk-pct 3`
-- `--max-risk-per-trade-pct 1`
-- `--max-concurrent-positions 3`
-
-OpenAPI note:
-- if your broker/account rejects SL/TP values on market submit, run lifecycle check without `--sl/--tp` and keep runtime failsafe active.
-
-8) Run account-orchestration selection check:
-
-```bash
-python scripts/run_account_orchestration_check.py --config configs/accounts_baseline.yaml --instrument XAUUSD
-```
-
-Health/persistence simulation examples:
-- pause primary account and force backup selection:
-  `python scripts/run_account_orchestration_check.py --config configs/accounts_baseline.yaml --pause-account DEMO_A`
-- simulate missing credentials:
-  `python scripts/run_account_orchestration_check.py --config configs/accounts_baseline.yaml --missing-creds-account DEMO_A`
-- simulate max positions reached:
-  `python scripts/run_account_orchestration_check.py --config configs/accounts_baseline.yaml --open-positions DEMO_A:3`
-
-9) Run multi-account execution policy check:
-
-```bash
-python scripts/run_multi_account_execution_check.py --config configs/accounts_baseline.yaml --instrument XAUUSD --routing-mode primary_backup --units 100
-```
-
-Other routing modes:
-- `--routing-mode single`
-- `--routing-mode fanout --max-fanout-accounts 2`
-- `--events-file logs/events.jsonl`
-
-Observability summary:
-
-```bash
-python scripts/summarize_observability.py --events-file logs/events.jsonl
-```
-
-10) Run full mock regression suite (all core layers):
+Full mock regression suite:
 
 ```bash
 python scripts/run_regression_suite.py
 ```
 
-This runs:
-- smoke
-- recovery
-- runtime loop (single iteration)
-- order lifecycle check
-- account orchestration check
-- multi-account execution checks (single / primary_backup / fanout)
+---
 
-11) Run VPS paper cycle profile (startup gate + suite + runtime probe):
+## Routing modes
 
-```bash
-python scripts/run_vps_paper_cycle.py --profile vps_paper --report-file logs/vps_paper_cycle_report.json
-```
+| Mode | Behaviour |
+|---|---|
+| `single` | One account, direct execution |
+| `primary_backup` | Primary account with automatic failover |
+| `fanout` | Parallel execution across N accounts |
 
-12) Validate account policy to ENV linking before runtime:
-
-```bash
-python scripts/validate_account_env.py --config configs/accounts_baseline.yaml --env-file local.env --require-secrets
-```
-
-13) Control account governance state:
-
-```bash
-python scripts/account_control.py status --accounts-config configs/accounts_baseline.yaml
-python scripts/account_control.py pause --account-id DEMO_A --reason "manual risk hold"
-python scripts/account_control.py resume --account-id DEMO_A --mode demo --reason "manual clear"
-```
-
-14) Rotate and summarize observability logs:
-
-```bash
-python scripts/rotate_observability_events.py --events-file logs/events.jsonl --archive-dir logs/archive
-python scripts/summarize_observability.py --events-file logs/events.jsonl --since-minutes 60
-```
-
-15) VPS scheduler artifacts:
-- cron example: `ops/vps/quantbridge_paper.cron`
-- systemd service example: `ops/vps/quantbridge-paper.service`
-- install helper: `ops/vps/install_paper_service.sh`
-
-Install service on VPS:
-
-```bash
-sudo bash ops/vps/install_paper_service.sh
-```
-
-Auth help:
-- `docs/AUTH_SETUP.md`
-- `docs/PAPER_ROLLOUT.md`
-
-Smoke expected output:
-
-```json
-{
-  "connect": true,
-  "price": true,
-  "place_order": true,
-  "close_order": true
-}
-```
+Account selector is health-aware — paused or degraded accounts are excluded from routing automatically.
 
 ---
 
-## Suite repositories (GitHub)
+## Risk gate flags
 
-| Repo | Remote |
-| --- | --- |
-| `quantmetrics_os` | [roelofgootjesgit/quantmetrics_os](https://github.com/roelofgootjesgit/quantmetrics_os) |
-| `quantbuild` | [roelofgootjesgit/QuantBuild-Signal-Engine](https://github.com/roelofgootjesgit/QuantBuild-Signal-Engine) |
-| `quantbridge` (**this**) | canonical module: `quantbridge` |
-| `quantlog` | canonical module: `quantlog` |
-| `quantanalytics` | canonical module: `quantanalytics` |
+Applied per execution, recommended for prop-style checks:
 
----
-
-## Documentation
-
-- `docs/ROADMAP.md`
-- `docs/PAPER_ROLLOUT.md`
-- `docs/AUTH_SETUP.md`
+| Flag | Purpose |
+|---|---|
+| `--daily-dd-limit-pct` | Max daily drawdown % before blocking |
+| `--total-dd-limit-pct` | Max total drawdown % before blocking |
+| `--max-open-risk-pct` | Max total open risk % at any time |
+| `--max-risk-per-trade-pct` | Max risk % per individual trade |
+| `--max-concurrent-positions` | Max number of open positions |
 
 ---
 
 ## Milestones
 
-- Milestone A: mock abstraction (done)
-- Milestone B: real cTrader demo execution (done baseline)
-- Milestone C: reconciliation + restart safety (done)
-- Milestone D: runtime control + lifecycle safety (done baseline)
-- Milestone E: account orchestration baseline (done baseline)
-- Milestone F: persistent governance + health-aware routing (done baseline)
-- Milestone G: multi-account routing + execution planning (done baseline)
-- Milestone H: multi-account scaling + production observability (in progress, observability baseline done)
+| Milestone | Status |
+|---|---|
+| A — Mock abstraction | Done |
+| B — Real cTrader demo execution | Done |
+| C — Reconciliation + restart safety | Done |
+| D — Runtime control + lifecycle safety | Done |
+| E — Account orchestration baseline | Done |
+| F — Persistent governance + health-aware routing | Done |
+| G — Multi-account routing + execution planning | Done |
+| H — Multi-account scaling + production observability | In progress |
 
 ---
 
-## Engineering Rules
+## Engineering rules
 
-- strategy code contains no broker API calls
-- broker differences stay in adapter + transport layers
-- broker responses are normalized into internal models
-- health and error codes are first-class data
+- Strategy code contains no broker API calls
+- Broker differences stay in adapter and transport layers
+- Broker responses are normalized into internal models before any downstream use
+- Health and error codes are first-class data, not exceptions
+
+---
+
+## Documentation
+
+- [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- [`docs/PAPER_ROLLOUT.md`](docs/PAPER_ROLLOUT.md)
+- [`docs/AUTH_SETUP.md`](docs/AUTH_SETUP.md)
+
+---
+
+## Suite repositories
+
+| Module | Repository |
+|---|---|
+| `quantmetrics_os` | [roelofgootjesgit/quantmetrics_os](https://github.com/roelofgootjesgit/quantmetrics_os) |
+| `quantbuild` | [roelofgootjesgit/QuantBuild-Signal-Engine](https://github.com/roelofgootjesgit/QuantBuild-Signal-Engine) |
+| `quantbridge` (**this**) | canonical module: `quantbridge` |
+| `quantlog` | canonical module: `quantlog` |
+| `quantanalytics` | canonical module: `quantanalytics` |
+| `quantresearch` | canonical module: `quantresearch` |
