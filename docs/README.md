@@ -9,7 +9,7 @@ It covers the full operating chain from signal formation to post-trade analysis,
 
 The suite operates as one controlled end-to-end system:
 
-Market Data -> Decision -> Execution -> Logging -> Metrics -> Analytics -> Improvement
+Market Data -> Decision -> Execution -> Logging -> Metrics -> Analytics -> Research / governance
 
 The objective is not to claim edge by narrative, but to evaluate decision quality under real operating conditions.
 
@@ -19,9 +19,10 @@ The objective is not to claim edge by narrative, but to evaluate decision qualit
 2. `quantbridge/` translates decisions into broker-facing execution actions.
 3. `quantlog/` records immutable operational events across the lifecycle.
 4. `quantmetrics_os/` assembles run artifacts, comparisons, and experiment outputs.
-5. `quantanalytics/` analyzes outcomes and feeds improvements back into decision design.
+5. `quantanalytics/` analyzes outcomes and produces deterministic diagnostics from QuantLog evidence.
+6. `quantresearch/` compares runs, records experiments, and turns evidence into explicit promotion or rejection decisions.
 
-This is one looped stack, not five disconnected repositories.
+This is one looped stack, not six disconnected layers.
 
 ## System boundary
 
@@ -33,6 +34,7 @@ Each module is responsible for its own domain:
 - `quantlog/`: append-only event logging and traceability
 - `quantmetrics_os/`: experiment runs, metrics, and artifact orchestration
 - `quantanalytics/`: post-trade analysis and insight generation
+- `quantresearch/`: hypothesis-driven experiments, comparisons, and research artifacts
 
 This separation ensures:
 - deterministic behavior per layer
@@ -66,6 +68,7 @@ The priority is continuity, containment, and recoverability.
 | `quantlog/` | Event capture and audit trail | Decisioning and broker routing |
 | `quantmetrics_os/` | Metrics runs and artifact management | Execution routing and raw decision logic |
 | `quantanalytics/` | Analysis and reporting | Live execution and broker connectivity |
+| `quantresearch/` | Experiment registry, comparisons, promotion governance | Signal generation, broker execution, or append-only logging |
 
 ## Quick start
 

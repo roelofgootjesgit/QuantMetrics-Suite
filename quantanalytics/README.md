@@ -187,6 +187,7 @@ Run as part of the root suite before opening a PR. CI validates the full cross-m
 - [`docs/ANALYTICS_ARCHITECTURE.md`](docs/ANALYTICS_ARCHITECTURE.md)
 - [`docs/ANALYTICS_SPRINT_PLAN.md`](docs/ANALYTICS_SPRINT_PLAN.md)
 - [`docs/LIVE_VPS_AND_LOCAL_BACKTEST.md`](docs/LIVE_VPS_AND_LOCAL_BACKTEST.md)
+- [`docs/GUARD_ATTRIBUTION_ENGINE.md`](docs/GUARD_ATTRIBUTION_ENGINE.md)
 
 ---
 

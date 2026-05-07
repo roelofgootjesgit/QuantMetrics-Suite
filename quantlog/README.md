@@ -166,10 +166,21 @@ quantlog/
 
 ## Quick start
 
+**Monorepo (`quantmetrics-suite`):** from the repository root:
+
 ```powershell
 cd quantlog
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\activate
+python -m pip install -e .
+```
+
+**Standalone `quantlog` clone:** use your checkout path, for example:
+
+```powershell
+cd C:\path\to\quantlog
+python -m venv .venv
+.\.venv\Scripts\activate
 python -m pip install -e .
 ```
 

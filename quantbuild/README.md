@@ -128,9 +128,9 @@ src/quantbuild/
 ├── dashboard/         Streamlit web UI
 ├── data/              Session logic, schemas
 └── io/                Parquet loader, Oanda/Dukascopy/cTrader feeds
-scripts/               13 analysis and validation scripts
+scripts/               analysis, validation, and ops helpers (38 Python scripts)
 configs/               YAML configs + instrument profiles
-tests/                 99 unit tests (8 files)
+tests/                 pytest suite (~216 tests, 29 test modules + conftest)
 reports/               JSON output from backtests and validation
 ```
 
@@ -185,7 +185,7 @@ Set `QUANTBRIDGE_SRC_PATH` in `.env` when running with cTrader. See `docs/CREDEN
 
 ## Testing
 
-99 tests across 8 files covering: backtest engine, ICT modules, indicators, live runner, models, news pipeline, portfolio heat engine, and adaptive mode layer.
+About **216** pytest tests across **29** test modules (`tests/test_*.py`, plus `conftest.py`), covering the backtest engine, ICT modules, indicators, live runner, models, news pipeline, portfolio heat engine, adaptive mode, QuantLog contracts, and suite layout checks.
 
 ```bash
 pytest tests/ -v

@@ -144,7 +144,10 @@ docs/                  workflow guide + auto-generated RESEARCH_INDEX.md
 
 ## Quick start
 
+From the **`quantresearch/`** directory that contains `pyproject.toml` (in the monorepo: `quantmetrics-suite/quantresearch/`):
+
 ```bash
+cd quantresearch
 pip install -e ".[dev]"    # dev: pytest — Python 3.10+, no runtime dependencies
 ```
 
