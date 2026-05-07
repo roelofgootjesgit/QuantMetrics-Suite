@@ -1,45 +1,46 @@
 # quantanalytics
 
-Analysis module for the QuantMetrics Suite.
+Read-only diagnostics layer for the QuantMetrics Suite. Turns `quantlog` event streams into deterministic evidence for strategy evaluation decisions. No write path to source logs, no order placement.
 
-`quantanalytics` is the read-only diagnostics layer that turns QuantLog event streams into deterministic evidence for strategy evaluation decisions.
+---
 
-## System identity
+## Role in the suite
 
-- Canonical name: `quantanalytics`
-- Suite role: Analysis Engine (downstream from `quantlog`)
-- Boundary: reads events, computes diagnostics, writes reports; never places orders or mutates source logs
+```
+quantbuild / quantbridge  →  quantlog  →  quantanalytics  →  quantresearch / promotion gates
+```
 
-## Why this module exists
+`quantbuild` and `quantbridge` produce decision and execution events. `quantlog` stores them as immutable JSONL. `quantanalytics` answers what happened, where opportunity was lost, and whether observed results are stable enough to justify promotion.
 
-`quantbuild` and `quantbridge` create decisions and execution events.
-`quantlog` stores those events as immutable JSONL.
-`quantanalytics` answers: what happened, where opportunity was lost, and whether observed results are stable enough to justify promotion.
+---
 
-Core outputs include:
+## Outputs
 
-- funnel diagnostics (detected -> evaluated -> action -> filled -> closed)
-- no-trade and guard-related bottleneck insights
-- performance and regime summaries
-- key findings artifacts for human review
+- Decision funnel: `detected → evaluated → action → filled → closed` with conversion rates per stage
+- Guard attribution: BLOCK % per guard, dominant blocking guard identification
+- No-trade and bottleneck diagnostics: where and why opportunity was filtered out
+- Performance summary: `winrate`, `profit_factor`, `expectancy`, `sample_size`
+- Key findings artifact: human-reviewable `.md` per run
 
-Data flow: `quantbuild` / `quantbridge` -> `quantlog` -> `quantanalytics` -> `quantresearch` / promotion decisions.
+---
 
-## Correlation contract in the suite
+## Correlation contract
 
-`quantanalytics` relies on the same correlation keys emitted upstream:
+`quantanalytics` relies on correlation keys emitted upstream. Without them, diagnostics run but decision attribution quality drops.
 
-- `run_id`: identifies one run artifact set
-- `session_id`: groups related runtime sessions inside a run
-- `trace_id`: links end-to-end execution traces
-- `decision_cycle_id`: links decision-chain events (`signal_detected` -> `trade_action`)
-- `trade_id` / `order_ref`: links execution and lifecycle events
+| Key | Purpose |
+|---|---|
+| `run_id` | Identifies one run artifact set |
+| `session_id` | Groups related runtime sessions inside a run |
+| `trace_id` | Links end-to-end execution traces |
+| `decision_cycle_id` | Links decision-chain events (`signal_detected` → `trade_action`) |
+| `trade_id` / `order_ref` | Links execution and lifecycle events |
 
-Without these keys, diagnostics can still run, but decision attribution quality drops.
+---
 
 ## Repository layout
 
-```text
+```
 quantanalytics/
 ├── quantmetrics_analytics/
 │   ├── ingestion/
@@ -53,21 +54,20 @@ quantanalytics/
 └── README.md
 ```
 
-Package and CLI:
-- Package name: `quantmetrics-analytics`
+- Package: `quantmetrics-analytics`
 - Import: `quantmetrics_analytics`
-- CLI: `python -m quantmetrics_analytics.cli.run_analysis` or `quantmetrics-analytics`
+- CLI: `quantmetrics-analytics` or `python -m quantmetrics_analytics.cli.run_analysis`
+
+---
 
 ## Quick start
-
-Install:
 
 ```bash
 cd quantanalytics
 pip install -e .
 ```
 
-Run on one file:
+Run on a single file:
 
 ```bash
 python -m quantmetrics_analytics.cli.run_analysis \
@@ -87,21 +87,25 @@ Use exactly one input mode: `--jsonl`, `--dir`, or `--glob`.
 
 Default output location:
 
-```text
+```
 quantanalytics/output_rapport/<input_stem>_YYYYMMDD_HHMMSSZ.txt
 quantanalytics/output_rapport/<input_stem>_YYYYMMDD_HHMMSSZ_KEY_FINDINGS.md
 ```
 
+---
+
+## Testing
+
+```bash
+pytest quantanalytics/tests -q
+```
+
+Run as part of the root suite before opening a PR. CI validates the full cross-module baseline on every push.
+
+---
+
 ## Documentation
 
-- [docs/ANALYTICS_ARCHITECTURE.md](docs/ANALYTICS_ARCHITECTURE.md)
-- [docs/ANALYTICS_SPRINT_PLAN.md](docs/ANALYTICS_SPRINT_PLAN.md)
-- [docs/LIVE_VPS_AND_LOCAL_BACKTEST.md](docs/LIVE_VPS_AND_LOCAL_BACKTEST.md)
-
-## In the full QuantMetrics system
-
-- Upstream modules produce decisions/events: `quantbuild`, `quantbridge`, `quantlog`
-- This module transforms those events into deterministic diagnostics
-- Downstream consumers use these artifacts for research and governance (`quantresearch`, promotion gates, run reviews)
-
-This module is intentionally analysis-only: it improves decision quality visibility, not trade execution.
+- [`docs/ANALYTICS_ARCHITECTURE.md`](docs/ANALYTICS_ARCHITECTURE.md)
+- [`docs/ANALYTICS_SPRINT_PLAN.md`](docs/ANALYTICS_SPRINT_PLAN.md)
+- [`docs/LIVE_VPS_AND_LOCAL_BACKTEST.md`](docs/LIVE_VPS_AND_LOCAL_BACKTEST.md)
