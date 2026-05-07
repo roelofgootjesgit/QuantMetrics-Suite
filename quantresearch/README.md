@@ -1,92 +1,165 @@
 # quantresearch
 
-## SYSTEM IDENTITY
+Research and decision layer for the QuantMetrics Suite. Captures hypothesis-driven strategy research: what was tested, what was learned, and what changes next. Converts correlated evidence from upstream modules into explicit promotion or rejection decisions.
 
-This module is part of the QuantMetrics suite.
-- Canonical name: `quantresearch`
-- Role: Research and Decision Layer
-
-`quantresearch` captures hypothesis-driven strategy research: what was tested, what was learned, and what should change next.
+Not a loose notebook — a structured research machine with registry, comparison engine, and auditable knowledge files.
 
 ---
 
-## Core responsibility
+## Role in the suite
 
-- Register experiments and link baseline/variant runs.
-- Compare run metrics and generate decision-oriented artifacts.
-- Store validated edges and rejected hypotheses as knowledge files.
-- Keep a living research index for portfolio-level strategy learning.
-
-## Correlation with the total system
-
-`quantresearch` depends on consistent run correlation generated upstream:
-
-- links baseline and candidate by experiment IDs and run IDs
-- consumes analytics and event-derived metrics tied to `run_id`, `trace_id`, and decision/execution outcomes
-- turns correlated artifacts into explicit promotion/reject decisions
-
-In short: upstream modules produce correlated evidence; `quantresearch` converts that evidence into governance decisions.
-
----
-
-## Where it sits
-
-```text
-QuantBuild      → simulation & configs
-QuantBridge     → execution
-QuantLog        → source of truth (events)
-QuantAnalytics  → diagnostics (“what happened”)
-QuantResearch   → decisions & reproducible research (“what it means”)
+```
+quantbuild / quantbridge  →  quantlog  →  quantanalytics  →  quantresearch  →  promotion / rejection
 ```
 
-Typical loop:
+Upstream modules produce correlated evidence. `quantresearch` converts that evidence into governance decisions. One hypothesis per experiment, one controlled change per run, baseline required, conclusions traceable to numbers.
 
-```text
-Hypothesis → Build variant → Backtest / run → Metrics & analytics
-    → Compare to baseline → Conclusion → Decision → Update knowledge base
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+
+    %% ── INPUT ───────────────────────────────────────────────
+    subgraph IN["Upstream evidence"]
+        METRICS["Backtest / analytics metrics JSON\nmean_r · expectancy_r · trade_count\nrun_id · trace_id"]
+        KEYS["Correlation keys\nexperiment_id · baseline_run_id\nvariant_run_id"]
+    end
+
+    %% ── EXPERIMENT REGISTRY ──────────────────────────────────
+    subgraph REG["registry/"]
+        EXP["experiments.json\nEXP-xxx records\nconfigs · run IDs · status · outcome"]
+        EDGES["confirmed_edges.json\nvalidated strategy edges"]
+        REJ["rejected_hypotheses.json\nfailed experiments as knowledge"]
+        EDGE_REG["edge_registry/\nstructured edge records"]
+    end
+
+    METRICS --> EXP
+    KEYS    --> EXP
+
+    %% ── COMPARISON ENGINE ────────────────────────────────────
+    subgraph CMP["comparison_engine"]
+        NORM["Metric normalizer\nmean_r ↔ expectancy_r\ntrade_count ↔ total_trades"]
+        DELTA["Delta computation\nbaseline vs variant\nper metric"]
+        HINTS["Rule-based hints\ndecision_engine\nPROMOTE · REJECT · INCONCLUSIVE"]
+    end
+
+    EXP  --> NORM
+    NORM --> DELTA
+    DELTA --> HINTS
+
+    %% ── ARTIFACTS ────────────────────────────────────────────
+    subgraph ART["comparisons/ + experiments/"]
+        CJSON["EXP-xxx_comparison.json"]
+        CMD["EXP-xxx_comparison.md"]
+        LEDGER["experiments/EXP-xxx/\nexperiment.json · hypothesis.md\nexperiment_plan.md · results_summary.md\ndecision.md · links.json"]
+        PRE["preregistration.json\nacademic protocol layer\ntemporele integriteit"]
+    end
+
+    HINTS --> CJSON
+    HINTS --> CMD
+    HINTS --> LEDGER
+
+    %% ── KNOWLEDGE BASE ───────────────────────────────────────
+    subgraph KB["Knowledge base"]
+        UPSERT["upsert_experiment()\nexperiment_registry"]
+        CONF["confirmed_edges.json\nupdated on PROMOTE"]
+        REJK["rejected_hypotheses.json\nupdated on REJECT"]
+        IDX["docs/RESEARCH_INDEX.md\nauto-generated dashboard\nwrite_research_index()"]
+    end
+
+    LEDGER --> UPSERT
+    HINTS  --> CONF
+    HINTS  --> REJK
+    UPSERT --> IDX
+    CONF   --> IDX
+    REJK   --> IDX
+
+    %% ── RESEARCH LOG ─────────────────────────────────────────
+    subgraph LOG["research_logs/"]
+        RLOG["HYP-xxx_EXP-xxx_closed_dossier.md\nbuild_research_log_markdown()\nwrite_research_log()"]
+    end
+
+    LEDGER --> RLOG
+
+    %% ── PIPELINES ────────────────────────────────────────────
+    subgraph PIPE["pipelines/"]
+        HYP002["hyp002-pipeline\nreads promotion bundle JSON\nruns quantbuild configs\nwrites metrics bundle\nupserts registry + edges + dossier"]
+    end
+
+    EXP   --> HYP002
+    HYP002 --> UPSERT
+
+    %% ── DOWNSTREAM ───────────────────────────────────────────
+    subgraph DOWN["Outcome"]
+        PROM["PROMOTE\nedge confirmed\nconfig promoted to suite"]
+        REJD["REJECT\nhypothesis archived\nno config change"]
+        INCON["INCONCLUSIVE\nmore data required"]
+    end
+
+    HINTS --> PROM
+    HINTS --> REJD
+    HINTS --> INCON
 ```
 
 ---
 
-## Features
+## Research loop
 
-| Area | What this repo provides |
-|------|-------------------------|
-| **Experiment registry** | Central `registry/experiments.json` — one record per study (`EXP-xxx`), configs, run IDs, status, outcome |
-| **Comparison** | Normalizes metric dicts from backtest/analytics JSON, computes deltas, applies rule-based hints (`comparison_engine`, `decision_engine`) |
-| **Artifacts** | `comparisons/<EXP>_comparison.{json,md}` |
-| **Research logs** | Markdown logs from templates under `research_logs/` |
-| **Knowledge** | `confirmed_edges.json`, `rejected_hypotheses.json`, structured edges in `edge_registry` |
-| **Living index** | Run `write_research_index()` to refresh `docs/RESEARCH_INDEX.md` from the registries |
+```
+Hypothesis → build variant → backtest / run → metrics + analytics
+    → compare to baseline → conclusion → PROMOTE / REJECT → update knowledge base
+```
 
-Design rules baked in: **one hypothesis per experiment**, **same data window** for baseline and variant, **baseline required**, **run IDs** tied to real artifacts, conclusions traceable to numbers.
+Design rules enforced structurally:
+
+- One hypothesis per experiment
+- Same data window for baseline and variant
+- Baseline always required
+- Run IDs tied to real artifacts
+- Conclusions traceable to numbers
 
 ---
 
-## Install
+## Repository layout
 
-From the repository root:
-
-```bash
-pip install -e ".[dev]"   # dev: pytest
 ```
-
-Requires **Python 3.10+**. No runtime dependencies beyond the standard library.
-
-If you import the package from another working directory, set:
-
-```bash
-set QUANTRESEARCH_ROOT=C:\path\to\quantresearch   # Windows
-export QUANTRESEARCH_ROOT=/path/to/quantresearch   # Unix
+quantresearch/         Python package (installable)
+registry/
+├── experiments.json          one record per study (EXP-xxx)
+├── confirmed_edges.json      validated strategy edges
+└── rejected_hypotheses.json  failed experiments as knowledge
+schemas/               JSON Schema for experiments and research logs
+research_logs/         human-readable strategy research log files
+comparisons/           JSON + Markdown comparison artifacts
+experiments/           per-experiment ledger (EXP-xxx/)
+pipelines/             promotion bundle definitions
+templates/             Markdown templates for logs and comparisons
+tests/                 pytest
+docs/                  workflow guide + auto-generated RESEARCH_INDEX.md
 ```
 
 ---
 
 ## Quick start
 
-**1.** Export baseline and variant metrics as JSON (from QuantBuild scripts, analytics, or hand-built dicts). Keys like `mean_r` / `expectancy_r`, `trade_count` / `total_trades` are normalized automatically.
+```bash
+pip install -e ".[dev]"    # dev: pytest — Python 3.10+, no runtime dependencies
+```
 
-**2.** Compare and write artifacts:
+If importing from another working directory:
+
+```bash
+set QUANTRESEARCH_ROOT=C:\path\to\quantresearch    # Windows
+export QUANTRESEARCH_ROOT=/path/to/quantresearch   # Unix
+```
+
+---
+
+## Usage
+
+**Compare two runs:**
 
 ```python
 from pathlib import Path
@@ -97,7 +170,7 @@ from quantresearch.comparison_engine import (
 )
 
 baseline = load_json_metrics(Path("artifacts/baseline_metrics.json"))
-variant = load_json_metrics(Path("artifacts/variant_metrics.json"))
+variant  = load_json_metrics(Path("artifacts/variant_metrics.json"))
 
 cmp = compare_runs(
     baseline,
@@ -109,85 +182,66 @@ cmp = compare_runs(
 write_comparison_artifacts(cmp)
 ```
 
-**3.** Record or update experiments via `quantresearch.experiment_registry` (`upsert_experiment`, etc.).
+**Update experiment registry:**
 
-**4.** Refresh the markdown dashboard generated from registries:
+```python
+from quantresearch.experiment_registry import upsert_experiment
+upsert_experiment(...)
+```
+
+**Refresh the research index:**
 
 ```python
 from quantresearch.markdown_renderer import write_research_index
-
 write_research_index()
 ```
 
-**5.** Optional: build a research log with `quantresearch.research_log_builder` (`build_research_log_markdown`, `write_research_log`).
-
-**6.** **HYP-002 (NY sweep failure reclaim)** — sluit het dossier in de research-DB na QuantBuild-configs in de suite:
+**Run a pipeline (example: HYP-002):**
 
 ```bash
-# Vanaf quantmetrics-suite root; quantbuild als sibling van quantresearch
 cd quantresearch
 python -m quantresearch hyp002-pipeline
-# of: quantresearch-hyp002-pipeline   (na pip install -e .)
-# dry-run: python -m quantresearch hyp002-pipeline --dry-run
-# alleen metrics JSON, geen registry: ... hyp002-pipeline --no-registry
+python -m quantresearch hyp002-pipeline --dry-run       # dry run
+python -m quantresearch hyp002-pipeline --no-registry   # metrics only
 ```
 
-Dit leest `pipelines/hyp002_promotion_bundle.json`, draait elke geliste QuantBuild-config (subprocess, `QUANTMETRICS_SUITE_ROOT` = suite root), schrijft `runs/<bundle_id>/metrics_bundle.json`, **upsert** `registry/experiments.json` (**EXP-002**), werkt **EDGE-002** in `confirmed_edges.json` bij, overschrijft **`research_logs/HYP-002_EXP-002_closed_dossier.md`**, en vult **`experiments/EXP-002/`** (ledger v1: `experiment.json`, `hypothesis.md`, `experiment_plan.md`, `results_summary.md`, `decision.md`, `links.json`) zodat `python -m quantresearch validate --experiment-id EXP-002` slaagt.
+Reads `pipelines/hyp002_promotion_bundle.json`, runs each listed `quantbuild` config, writes `runs/<bundle_id>/metrics_bundle.json`, upserts `experiments.json`, updates `confirmed_edges.json`, and closes the experiment dossier under `experiments/EXP-002/`.
 
-**Academische protocol-laag (governance vs. inferentie):** zie [docs/ACADEMIC_RESEARCH_PROTOCOL.md](docs/ACADEMIC_RESEARCH_PROTOCOL.md) en `pipelines/hyp002_preregistration.json` → `experiments/EXP-002/preregistration.json` na pipeline. HYP-002 staat daar als **`retrospective_reconstruction`** / `pre_registration_valid: false` (geen echte pre-reg); `validate_preregistration_v1` eist temporele integriteit pas bij `pre_registration_valid: true`.
+**Validate an experiment ledger:**
 
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [docs/WORKFLOW_BACKTEST_NAAR_STRATEGIE.md](docs/WORKFLOW_BACKTEST_NAAR_STRATEGIE.md) | **NL** — end-to-end workflow from backtest to strategy decisions |
-| [docs/RESEARCH_INDEX.md](docs/RESEARCH_INDEX.md) | Auto-generated snapshot of experiments, edges, and rejected hypotheses |
-
----
-
-## Repository layout
-
-```text
-quantresearch/           # Python package (installable)
-registry/               # experiments.json, confirmed_edges.json, rejected_hypotheses.json
-schemas/                # JSON Schema for experiments / research logs
-research_logs/          # Human-readable STRATEGY RESEARCH LOG files
-comparisons/            # JSON + Markdown comparison artifacts
-templates/              # Markdown templates for logs and comparisons
-tests/                  # pytest
-docs/                   # Workflow guide + generated RESEARCH_INDEX.md
+```bash
+python -m quantresearch validate --experiment-id EXP-002
 ```
 
 ---
 
-## Running tests
+## Testing
 
 ```bash
 py -3 -m pytest -q
 ```
 
+Run as part of the root suite before opening a PR. CI validates the full cross-module baseline on every push.
+
 ---
 
-## Suite repositories (GitHub)
+## Documentation
 
-| Repo | Remote |
-| --- | --- |
+| Document | Purpose |
+|---|---|
+| [`docs/RESEARCH_INDEX.md`](docs/RESEARCH_INDEX.md) | Auto-generated snapshot of experiments, edges, and rejected hypotheses |
+| [`docs/WORKFLOW_BACKTEST_NAAR_STRATEGIE.md`](docs/WORKFLOW_BACKTEST_NAAR_STRATEGIE.md) | End-to-end workflow from backtest to strategy decision |
+| [`docs/ACADEMIC_RESEARCH_PROTOCOL.md`](docs/ACADEMIC_RESEARCH_PROTOCOL.md) | Governance vs inference protocol, pre-registration policy |
+
+---
+
+## Suite repositories
+
+| Module | Repository |
+|---|---|
 | `quantmetrics_os` | [roelofgootjesgit/quantmetrics_os](https://github.com/roelofgootjesgit/quantmetrics_os) |
 | `quantbuild` | [roelofgootjesgit/QuantBuild-Signal-Engine](https://github.com/roelofgootjesgit/QuantBuild-Signal-Engine) |
 | `quantbridge` | canonical module: `quantbridge` |
 | `quantlog` | canonical module: `quantlog` |
-| `quantresearch` (**this**) | [QuantResearch-Decision-Engine](https://github.com/roelofgootjesgit/QuantResearch-Decision-Engine) |
-
----
-
-## Remote
-
-Upstream for this decision-engine line: [QuantResearch-Decision-Engine](https://github.com/roelofgootjesgit/QuantResearch-Decision-Engine) on GitHub.
-
----
-
-## Summary
-
-QuantResearch is not a loose notebook: it is a **small research machine** — registry, comparison, logs, and knowledge files so strategy iteration stays **auditable** and **comparable** across experiments.
+| `quantanalytics` | canonical module: `quantanalytics` |
+| `quantresearch` (**this**) | [roelofgootjesgit/QuantResearch-Decision-Engine](https://github.com/roelofgootjesgit/QuantResearch-Decision-Engine) |
