@@ -9,13 +9,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quantmetrics_analytics.analysis.r_series_input import resolve_inference_run_id
-
 SCHEMA_VERSION = "mfe_timing_v1"
+
+
+class MfeTimingRunIdError(ValueError):
+    """Raised when MFE timing cannot safely pick one run_id."""
 
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def resolve_mfe_timing_run_id(events: list[dict[str, Any]], explicit: str | None) -> str:
+    """Pick one run_id from all events, allowing zero-trade single-run inputs."""
+    if explicit and str(explicit).strip():
+        return str(explicit).strip()
+
+    ids: set[str] = set()
+    for ev in events:
+        r = str(ev.get("run_id", "")).strip()
+        if r:
+            ids.add(r)
+
+    if len(ids) == 1:
+        return next(iter(ids))
+    if not ids:
+        raise MfeTimingRunIdError("No events with run_id found; cannot infer run_id.")
+    raise MfeTimingRunIdError(
+        f"Multiple run_id values in events ({sorted(ids)[:5]}...); "
+        "pass --run-id / QUANTMETRICS_ANALYTICS_RUN_ID."
+    )
 
 
 def _extract_tp_rows(events: list[dict[str, Any]], run_id: str) -> list[dict[str, Any]]:
@@ -170,7 +193,7 @@ def run_mfe_timing_for_events(
     experiment_id: str,
     output_dir: Path,
 ) -> tuple[Path, dict[str, Any]]:
-    run_id = resolve_inference_run_id(events, run_id_explicit)
+    run_id = resolve_mfe_timing_run_id(events, run_id_explicit)
     report = build_mfe_timing_report(
         events,
         run_id=run_id,

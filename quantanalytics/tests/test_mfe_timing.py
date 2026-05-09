@@ -10,6 +10,7 @@ import pytest
 from quantmetrics_analytics.analysis.mfe_timing import (
     SCHEMA_VERSION,
     build_mfe_timing_report,
+    resolve_mfe_timing_run_id,
     run_mfe_timing_for_events,
     write_mfe_timing_report,
 )
@@ -79,3 +80,32 @@ def test_run_mfe_timing_for_events_resolves_run_id(tmp_path: Path):
     assert path.name == "qb_x_mfe_timing_report.json"
     assert rep["buckets"]["early_1_2"]["n"] == 1
     assert path.is_file()
+
+
+def test_run_mfe_timing_for_events_allows_single_run_without_closed_trades(tmp_path: Path):
+    events = [
+        {
+            "event_type": "trade_action",
+            "run_id": "qb_no_trades",
+            "payload": {"decision": "NO_ACTION"},
+        }
+    ]
+    path, rep = run_mfe_timing_for_events(
+        events,
+        [tmp_path / "f.jsonl"],
+        run_id_explicit=None,
+        experiment_id="EXP",
+        output_dir=tmp_path,
+    )
+    assert path.name == "qb_no_trades_mfe_timing_report.json"
+    assert rep["tp_trades"]["n"] == 0
+    assert rep["input"]["trade_closed_events_seen"] == 0
+
+
+def test_resolve_mfe_timing_run_id_rejects_ambiguous_inputs():
+    events = [
+        {"event_type": "trade_action", "run_id": "run-a", "payload": {}},
+        {"event_type": "trade_action", "run_id": "run-b", "payload": {}},
+    ]
+    with pytest.raises(ValueError, match="Multiple run_id"):
+        resolve_mfe_timing_run_id(events, None)

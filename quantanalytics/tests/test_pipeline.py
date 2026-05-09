@@ -46,6 +46,45 @@ def test_cli_exit_code(tmp_path: Path) -> None:
     assert run(argv=["--jsonl", str(_FIXTURE), "--reports", "summary", "--stdout", "--no-key-findings-md"]) == 0
 
 
+def test_cli_all_reports_handles_single_run_without_closed_trades(tmp_path: Path, monkeypatch) -> None:
+    """Default all-reports flow must not fail just because a run has no closed trades."""
+    from io import StringIO
+
+    import quantmetrics_analytics.cli.run_analysis as ra
+    from quantmetrics_analytics.cli.run_analysis import run
+
+    monkeypatch.setattr(ra, "_output_rapport_dir", lambda: tmp_path)
+    buf = StringIO()
+    assert run(
+        stdout=buf,
+        argv=["--jsonl", str(_FIXTURE), "--reports", "all", "--stdout", "--no-key-findings-md"],
+    ) == 0
+    out = buf.getvalue()
+    assert "Total events: 5" in out
+    assert "TP trades: 0" in out
+    assert (tmp_path / "run-a_mfe_timing_report.json").is_file()
+
+
+def test_cli_all_reports_skips_mfe_timing_when_run_id_ambiguous(tmp_path: Path, capsys) -> None:
+    from io import StringIO
+
+    from quantmetrics_analytics.cli.run_analysis import run
+
+    mixed = tmp_path / "mixed.jsonl"
+    lines = [ln for ln in _FIXTURE.read_text(encoding="utf-8").splitlines()[:2] if ln.strip()]
+    ev = json.loads(lines[1])
+    ev["run_id"] = "run-b"
+    mixed.write_text(lines[0] + "\n" + json.dumps(ev, ensure_ascii=True) + "\n", encoding="utf-8")
+
+    buf = StringIO()
+    assert run(
+        stdout=buf,
+        argv=["--jsonl", str(mixed), "--reports", "all", "--stdout", "--no-key-findings-md"],
+    ) == 0
+    assert "Total events: 2" in buf.getvalue()
+    assert "MFE timing report skipped" in capsys.readouterr().err
+
+
 def test_cli_run_id_filter_keeps_matching_events(tmp_path: Path) -> None:
     from io import StringIO
 
