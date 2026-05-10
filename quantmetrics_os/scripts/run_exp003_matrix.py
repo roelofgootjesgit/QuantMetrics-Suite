@@ -10,6 +10,7 @@ from pathlib import Path
 
 QUANTBUILD_ROOT = Path(__file__).resolve().parents[2] / "quantbuild"
 CONFIG_BASE = QUANTBUILD_ROOT / "configs" / "experiments" / "exp003_overlap_breakout"
+RUNS_BASE = Path(__file__).resolve().parent.parent / "runs"
 
 INSTRUMENTS = [
     {"symbol": "XAUUSD", "config": "XAUUSD.yaml"},
@@ -20,8 +21,9 @@ INSTRUMENTS = [
 ]
 
 
-def main() -> None:
+def main() -> int:
     results = []
+    failures = 0
     for inst in INSTRUMENTS:
         config_path = CONFIG_BASE / inst["config"]
         print(f"\n[EXP-003] Running {inst['symbol']}...")
@@ -50,9 +52,10 @@ def main() -> None:
         )
 
         if proc.returncode != 0:
+            failures += 1
             print(f"[EXP-003] FAILED: {inst['symbol']} exit {proc.returncode}")
 
-    summary_path = Path(__file__).resolve().parent.parent / "runs" / "EXP-003" / "matrix_summary.json"
+    summary_path = RUNS_BASE / "EXP-003" / "matrix_summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
         json.dumps(
@@ -67,7 +70,8 @@ def main() -> None:
     )
 
     print(f"\n[EXP-003] Matrix summary: {summary_path}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
