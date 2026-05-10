@@ -66,7 +66,7 @@ def invoke_collect_run_artifacts(cfg: dict[str, Any], ql_emitter: QuantLogEmitte
 
     experiment_id = str(art.get("experiment_id") or "").strip() or _auto_experiment_id(str(ql_emitter.run_id))
     role = str(art.get("role") or "single").strip().lower()
-    if role not in {"baseline", "variant", "single"}:
+    if not role:
         role = "single"
 
     cfg_path = cfg.get("_quantbuild_config_path")
