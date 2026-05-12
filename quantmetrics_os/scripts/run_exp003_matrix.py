@@ -20,7 +20,7 @@ INSTRUMENTS = [
 ]
 
 
-def main() -> None:
+def main() -> int:
     results = []
     for inst in INSTRUMENTS:
         config_path = CONFIG_BASE / inst["config"]
@@ -67,7 +67,10 @@ def main() -> None:
     )
 
     print(f"\n[EXP-003] Matrix summary: {summary_path}")
+    if any(int(row["exit_code"]) != 0 for row in results):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
