@@ -20,8 +20,9 @@ INSTRUMENTS = [
 ]
 
 
-def main() -> None:
+def main() -> int:
     results = []
+    failed = False
     for inst in INSTRUMENTS:
         config_path = CONFIG_BASE / inst["config"]
         print(f"\n[EXP-003] Running {inst['symbol']}...")
@@ -50,6 +51,7 @@ def main() -> None:
         )
 
         if proc.returncode != 0:
+            failed = True
             print(f"[EXP-003] FAILED: {inst['symbol']} exit {proc.returncode}")
 
     summary_path = Path(__file__).resolve().parent.parent / "runs" / "EXP-003" / "matrix_summary.json"
@@ -67,7 +69,8 @@ def main() -> None:
     )
 
     print(f"\n[EXP-003] Matrix summary: {summary_path}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
