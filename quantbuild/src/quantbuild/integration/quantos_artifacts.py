@@ -37,6 +37,12 @@ def _auto_experiment_id(run_id: str) -> str:
     return f"EXP-{d}-{tail}"
 
 
+def _artifact_role(raw: Any) -> str:
+    role = str(raw or "single").strip().lower()
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in role).strip("_")
+    return safe or "single"
+
+
 def invoke_collect_run_artifacts(cfg: dict[str, Any], ql_emitter: QuantLogEmitter | None) -> None:
     """Run ``quantmetrics_os/scripts/collect_run_artifact.py`` when ``artifacts.enabled`` is true."""
     if ql_emitter is None:
@@ -65,9 +71,7 @@ def invoke_collect_run_artifacts(cfg: dict[str, Any], ql_emitter: QuantLogEmitte
         return
 
     experiment_id = str(art.get("experiment_id") or "").strip() or _auto_experiment_id(str(ql_emitter.run_id))
-    role = str(art.get("role") or "single").strip().lower()
-    if role not in {"baseline", "variant", "single"}:
-        role = "single"
+    role = _artifact_role(art.get("role"))
 
     cfg_path = cfg.get("_quantbuild_config_path")
     config_yaml = Path(str(cfg_path)).resolve() if cfg_path else None
