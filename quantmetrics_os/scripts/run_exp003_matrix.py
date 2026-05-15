@@ -68,6 +68,10 @@ def main() -> None:
 
     print(f"\n[EXP-003] Matrix summary: {summary_path}")
 
+    failed = [r for r in results if r["exit_code"] != 0]
+    if failed:
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()
