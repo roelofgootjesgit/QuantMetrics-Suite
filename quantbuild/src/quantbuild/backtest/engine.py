@@ -40,6 +40,24 @@ from src.quantbuild.export.trade_r_series import assert_quantlog_inference_polic
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_BACKTEST_ENGINES = {"", "sqe", "sqe_backtest", "default"}
+_DEDICATED_BACKTEST_ENGINES = {
+    "ny_sweep_reversion",
+    "ny_sweep_failure_reclaim",
+}
+_SUPPORTED_BACKTEST_ENGINES = _DEFAULT_BACKTEST_ENGINES | _DEDICATED_BACKTEST_ENGINES
+
+
+def _validated_backtest_engine(raw_engine: Any) -> str:
+    engine_name = str(raw_engine or "").strip().lower()
+    if engine_name not in _SUPPORTED_BACKTEST_ENGINES:
+        supported = ", ".join(sorted(e for e in _SUPPORTED_BACKTEST_ENGINES if e))
+        raise ValueError(
+            f"Unsupported backtest.engine {engine_name!r}. "
+            f"Supported engines: {supported}; omit backtest.engine for default SQE."
+        )
+    return engine_name
+
 
 def _bar_timestamp_utc_iso(ts: Any) -> str:
     t = pd.Timestamp(ts)
@@ -341,6 +359,7 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
     tf = timeframes[0]
     base_path = Path(cfg.get("data", {}).get("base_path", "data/market_cache"))
     bt_cfg = cfg.get("backtest", {}) or {}
+    engine_name = _validated_backtest_engine(bt_cfg.get("engine"))
     period_days = bt_cfg.get("default_period_days", 60)
     tp_r = bt_cfg.get("tp_r", 2.0)
     sl_r = bt_cfg.get("sl_r", 1.0)
@@ -447,7 +466,7 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
         except (ImportError, Exception) as e:
             logger.debug("Regime detection skipped: %s", e)
 
-    if str((cfg.get("backtest") or {}).get("engine", "")).lower() == "ny_sweep_reversion":
+    if engine_name == "ny_sweep_reversion":
         from src.quantbuild.strategies.ny_sweep_reversion_engine import run_ny_sweep_backtest
 
         return run_ny_sweep_backtest(
@@ -461,7 +480,7 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
             regime_series=regime_series,
         )
 
-    if str((cfg.get("backtest") or {}).get("engine", "")).lower() == "ny_sweep_failure_reclaim":
+    if engine_name == "ny_sweep_failure_reclaim":
         from src.quantbuild.strategies.ny_sweep_failure_reclaim_engine import run_ny_sweep_failure_reclaim_backtest
 
         return run_ny_sweep_failure_reclaim_backtest(

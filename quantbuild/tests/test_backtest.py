@@ -71,6 +71,16 @@ class TestSimulateTrade:
         assert r1["entry_price"] == pytest.approx(r2["entry_price"])
 
 
+def test_unknown_backtest_engine_fails_before_default_sqe_fallback():
+    cfg = {
+        "backtest": {"engine": "london_ny_overlap_breakout"},
+        "quantlog": {"enabled": False},
+    }
+
+    with pytest.raises(ValueError, match="Unsupported backtest.engine.*london_ny_overlap_breakout"):
+        run_backtest(cfg)
+
+
 class TestBacktestQuantLog:
     """Backtest emits QuantLog JSONL when ``quantlog.enabled`` (same contract as live_runner)."""
 
