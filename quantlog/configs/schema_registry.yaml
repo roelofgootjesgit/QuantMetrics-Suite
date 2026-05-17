@@ -57,6 +57,19 @@ event_types:
       - bar_timestamp
       - session
       - regime
+    optional_payload:
+      - component_type
+      - bb_lower_break
+      - bb_upper_break
+      - macd_cross_bull
+      - macd_cross_bear
+      - bb_extension_normalized_atr
+      - macd_cross_velocity
+      - regime_at_signal
+      - session_at_signal
+      - bars_since_last_signal
+      - price_distance_from_last_signal_atr
+      - signal_is_independent
   signal_filtered:
     required_payload:
       - filter_reason
@@ -107,6 +120,10 @@ event_types:
       - outcome
       - session
       - regime
+      - bars_to_midline
+      - hit_midline_before_sl
+      - exit_reason
+      - bars_held
   adaptive_mode_transition:
     required_payload:
       - old_mode
@@ -154,3 +171,37 @@ event_types:
       - latest_bar_ts_utc
       - session
       - threshold_minutes
+  component_observed:
+    required_payload:
+      - observation_id
+      - component_type
+      - bar_timestamp
+      - session_at_signal
+      - regime_at_signal
+    optional_payload:
+      - bb_lower_break
+      - bb_upper_break
+      - macd_cross_bull
+      - macd_cross_bear
+      - bb_extension_normalized_atr
+      - macd_cross_velocity
+      - bars_since_last_signal
+      - price_distance_from_last_signal_atr
+  candidate_signal:
+    required_payload:
+      - signal_id
+      - component_type
+      - bar_timestamp
+      - session_at_signal
+      - regime_at_signal
+      - direction
+      - signal_is_independent
+    optional_payload:
+      - bb_lower_break
+      - bb_upper_break
+      - macd_cross_bull
+      - macd_cross_bear
+      - bb_extension_normalized_atr
+      - macd_cross_velocity
+      - bars_since_last_signal
+      - price_distance_from_last_signal_atr

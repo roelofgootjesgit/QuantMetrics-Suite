@@ -26,6 +26,10 @@ from quantlog.events.schema import (
     TRADE_EXECUTED_DIRECTIONS,
     DECISION_CHAIN_EVENT_TYPES,
     DECISION_CHAIN_EVENT_ORDER_RANK,
+    SIGNAL_RESEARCH_COMPONENT_TYPES,
+    SIGNAL_RESEARCH_REGIME_VALUES,
+    SIGNAL_RESEARCH_SESSION_VALUES,
+    TRADE_CLOSED_EXIT_REASONS,
 )
 
 
@@ -89,6 +93,79 @@ def _num_in_closed_unit_interval(value: Any) -> bool:
 
 def _non_negative_int_not_bool(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _signal_research_optional_issues(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    """Validate optional BB/MACD research fields when present on signal-related events."""
+    rows: list[tuple[str, str]] = []
+
+    ct = payload.get("component_type")
+    if ct is not None and (
+        not isinstance(ct, str) or ct not in SIGNAL_RESEARCH_COMPONENT_TYPES
+    ):
+        rows.append(("error", f"signal_research_invalid_component_type: {ct!r}"))
+
+    for regime_key in ("regime_at_signal",):
+        rv = payload.get(regime_key)
+        if rv is not None and (not isinstance(rv, str) or rv not in SIGNAL_RESEARCH_REGIME_VALUES):
+            rows.append(("error", f"signal_research_invalid_{regime_key}: {rv!r}"))
+
+    for session_key in ("session_at_signal",):
+        sv = payload.get(session_key)
+        if sv is not None and (
+            not isinstance(sv, str) or sv not in SIGNAL_RESEARCH_SESSION_VALUES
+        ):
+            rows.append(("error", f"signal_research_invalid_{session_key}: {sv!r}"))
+
+    for bool_key in (
+        "bb_lower_break",
+        "bb_upper_break",
+        "macd_cross_bull",
+        "macd_cross_bear",
+        "signal_is_independent",
+    ):
+        if bool_key in payload and not isinstance(payload[bool_key], bool):
+            rows.append(("error", f"signal_research_invalid_{bool_key}: {payload[bool_key]!r}"))
+
+    for float_key in ("bb_extension_normalized_atr", "macd_cross_velocity", "price_distance_from_last_signal_atr"):
+        if float_key in payload and payload[float_key] is not None:
+            v = payload[float_key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                rows.append(("error", f"signal_research_invalid_{float_key}: {v!r}"))
+
+    bsl = payload.get("bars_since_last_signal")
+    if bsl is not None and not _non_negative_int_not_bool(bsl):
+        rows.append(("error", f"signal_research_invalid_bars_since_last_signal: {bsl!r}"))
+
+    return rows
+
+
+def _trade_closed_research_optional_issues(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    er = payload.get("exit_reason")
+    if er is not None and (not isinstance(er, str) or er not in TRADE_CLOSED_EXIT_REASONS):
+        rows.append(("error", f"trade_closed_invalid_exit_reason: {er!r}"))
+
+    if "hit_midline_before_sl" in payload and not isinstance(payload["hit_midline_before_sl"], bool):
+        rows.append(
+            ("error", f"trade_closed_invalid_hit_midline_before_sl: {payload['hit_midline_before_sl']!r}")
+        )
+
+    btm = payload.get("bars_to_midline")
+    if btm is not None and not _non_negative_int_not_bool(btm):
+        rows.append(("error", f"trade_closed_invalid_bars_to_midline: {btm!r}"))
+
+    bh = payload.get("bars_held")
+    if bh is not None and not _non_negative_int_not_bool(bh):
+        rows.append(("error", f"trade_closed_invalid_bars_held: {bh!r}"))
+
+    for rk in ("mfe_r", "mae_r"):
+        if rk in payload and payload[rk] is not None:
+            v = payload[rk]
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                rows.append(("error", f"trade_closed_invalid_{rk}: {v!r}"))
+
+    return rows
 
 
 def _signal_evaluated_optional_issues(payload: dict[str, Any]) -> list[tuple[str, str]]:
@@ -422,6 +499,75 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
 
     if event_type == "signal_evaluated" and isinstance(payload, dict):
         for level, msg in _signal_evaluated_optional_issues(payload):
+            issues.append(
+                ValidationIssue(
+                    level=level,
+                    path=raw_line.path,
+                    line_number=raw_line.line_number,
+                    message=msg,
+                )
+            )
+
+    if event_type in {
+        "component_observed",
+        "candidate_signal",
+        "signal_detected",
+    } and isinstance(payload, dict):
+        if event_type == "component_observed":
+            ct = payload.get("component_type")
+            if not isinstance(ct, str) or ct not in SIGNAL_RESEARCH_COMPONENT_TYPES:
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        path=raw_line.path,
+                        line_number=raw_line.line_number,
+                        message=f"component_observed_invalid_component_type: {ct!r}",
+                    )
+                )
+        if event_type == "candidate_signal":
+            ct = payload.get("component_type")
+            if not isinstance(ct, str) or ct not in SIGNAL_RESEARCH_COMPONENT_TYPES:
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        path=raw_line.path,
+                        line_number=raw_line.line_number,
+                        message=f"candidate_signal_invalid_component_type: {ct!r}",
+                    )
+                )
+            direction = str(payload.get("direction", "")).upper()
+            if direction not in TRADE_EXECUTED_DIRECTIONS:
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        path=raw_line.path,
+                        line_number=raw_line.line_number,
+                        message=f"candidate_signal_invalid_direction: {direction}",
+                    )
+                )
+            if "signal_is_independent" in payload and not isinstance(
+                payload["signal_is_independent"], bool
+            ):
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        path=raw_line.path,
+                        line_number=raw_line.line_number,
+                        message="candidate_signal_invalid_signal_is_independent",
+                    )
+                )
+        for level, msg in _signal_research_optional_issues(payload):
+            issues.append(
+                ValidationIssue(
+                    level=level,
+                    path=raw_line.path,
+                    line_number=raw_line.line_number,
+                    message=msg,
+                )
+            )
+
+    if event_type == "trade_closed" and isinstance(payload, dict):
+        for level, msg in _trade_closed_research_optional_issues(payload):
             issues.append(
                 ValidationIssue(
                     level=level,

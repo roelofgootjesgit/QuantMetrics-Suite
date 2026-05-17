@@ -42,7 +42,7 @@ REQUIRED_ENVELOPE_FIELDS: Final[set[str]] = {
 
 ALLOWED_SOURCE_SYSTEMS: Final[set[str]] = {"quantbuild", "quantbridge", "quantlog", "execution"}
 ALLOWED_SEVERITIES: Final[set[str]] = {"info", "warn", "error", "critical"}
-ALLOWED_ENVIRONMENTS: Final[set[str]] = {"paper", "dry_run", "live", "shadow"}
+ALLOWED_ENVIRONMENTS: Final[set[str]] = {"paper", "dry_run", "live", "shadow", "backtest"}
 
 EVENT_PAYLOAD_REQUIRED: Final[dict[str, set[str]]] = {
     "signal_evaluated": {"signal_type", "signal_direction", "confidence"},
@@ -85,7 +85,76 @@ EVENT_PAYLOAD_REQUIRED: Final[dict[str, set[str]]] = {
         "session",
         "threshold_minutes",
     },
+    # BB/MACD signal research battery (EXP-BB-MECH): observability before entry funnel.
+    "component_observed": {
+        "observation_id",
+        "component_type",
+        "bar_timestamp",
+        "session_at_signal",
+        "regime_at_signal",
+    },
+    "candidate_signal": {
+        "signal_id",
+        "component_type",
+        "bar_timestamp",
+        "session_at_signal",
+        "regime_at_signal",
+        "direction",
+        "signal_is_independent",
+    },
 }
+
+# --- BB/MACD signal research (optional on signal_detected / candidate / component) ---
+
+SIGNAL_RESEARCH_COMPONENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "BB_LOWER_BREAK",
+        "BB_UPPER_BREAK",
+        "MACD_BULL_CROSS",
+        "MACD_BEAR_CROSS",
+        "JOINT",
+    }
+)
+
+SIGNAL_RESEARCH_REGIME_VALUES: Final[frozenset[str]] = frozenset(
+    {"TREND", "EXPANSION", "COMPRESSION", "UNKNOWN"}
+)
+
+SIGNAL_RESEARCH_SESSION_VALUES: Final[frozenset[str]] = frozenset(
+    {"LONDON", "NEW_YORK", "OVERLAP", "OFF_HOURS"}
+)
+
+TRADE_CLOSED_EXIT_REASONS: Final[frozenset[str]] = frozenset(
+    {"midline", "sl", "tp", "time_exit"}
+)
+
+SIGNAL_RESEARCH_OPTIONAL_PAYLOAD_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "component_type",
+        "bb_lower_break",
+        "bb_upper_break",
+        "macd_cross_bull",
+        "macd_cross_bear",
+        "bb_extension_normalized_atr",
+        "macd_cross_velocity",
+        "regime_at_signal",
+        "session_at_signal",
+        "bars_since_last_signal",
+        "price_distance_from_last_signal_atr",
+        "signal_is_independent",
+    }
+)
+
+TRADE_CLOSED_RESEARCH_OPTIONAL_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "bars_to_midline",
+        "hit_midline_before_sl",
+        "exit_reason",
+        "bars_held",
+        "mfe_r",
+        "mae_r",
+    }
+)
 
 TRADE_ACTION_DECISIONS: Final[set[str]] = {"ENTER", "EXIT", "REVERSE", "NO_ACTION"}
 RISK_GUARD_DECISIONS: Final[set[str]] = {"ALLOW", "BLOCK", "REDUCE", "DELAY"}

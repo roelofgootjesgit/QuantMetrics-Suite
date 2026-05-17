@@ -70,20 +70,20 @@ Niet elke conditie als generiek `signal_detected` loggen zonder onderscheid.
 
 | # | Taak | Status |
 |---|------|--------|
-| 0.4a | Inventariseer bestaande event types in `quantlog` contracts + `QuantBuildEmitter` | ☐ |
-| 0.4b | Payload velden (component/candidate): `component_type`, BB/MACD flags, `bb_extension_normalized_atr`, `macd_cross_velocity`, `regime_at_signal`, `session_at_signal`, `bars_since_last_signal`, `price_distance_from_last_signal_atr`, `signal_is_independent` | ☐ |
-| 0.4c | Payload velden (trade_closed / research outcome): `bars_to_midline`, `hit_midline_before_sl`, `exit_reason`, `bars_held`, `mfe_r`, `mae_r` | ☐ |
-| 0.4d | Contract tests in `quantlog/tests/` bij schema-wijziging | ☐ |
-| 0.4e | Wire-up in quantbuild emitter (geen ad-hoc JSON buiten contract) | ☐ |
+| 0.4a | Inventariseer bestaande event types in `quantlog` contracts + `QuantBuildEmitter` | ☑ |
+| 0.4b | Payload velden (component/candidate): `component_type`, BB/MACD flags, `bb_extension_normalized_atr`, `macd_cross_velocity`, `regime_at_signal`, `session_at_signal`, `bars_since_last_signal`, `price_distance_from_last_signal_atr`, `signal_is_independent` | ☑ |
+| 0.4c | Payload velden (trade_closed / research outcome): `bars_to_midline`, `hit_midline_before_sl`, `exit_reason`, `bars_held`, `mfe_r`, `mae_r` | ☑ |
+| 0.4d | Contract tests in `quantlog/tests/` bij schema-wijziging | ☑ |
+| 0.4e | Wire-up in quantbuild emitter (payload builders in `research/signal_research_quantlog.py`) | ☑ |
 
 ## 0.5 Permutation test utility (quantresearch)
 
 | # | Taak | Status |
 |---|------|--------|
-| 0.5a | Tests: `quantresearch/tests/test_permutation_test.py` | ☐ |
-| 0.5b | Implementatie: `quantresearch/quantresearch/statistics/permutation_test.py` | ☐ |
-| 0.5c | Output: `observed_hit_rate`, `baseline_mean_hit_rate`, `p_value`, `significant`, `n_signals`, `n_permutations`, `seed` | ☐ |
-| 0.5d | Validatie: random → niet structureel p&lt;0.05; perfect predictor → p≈0; seed reproduceerbaar | ☐ |
+| 0.5a | Tests: `quantresearch/tests/test_permutation_test.py` | ☑ |
+| 0.5b | Implementatie: `quantresearch/quantresearch/statistics/permutation_test.py` | ☑ |
+| 0.5c | Output: `observed_hit_rate`, `baseline_mean_hit_rate`, `p_value`, `significant`, `n_signals`, `n_permutations`, `seed` | ☑ |
+| 0.5d | Validatie: random → niet structureel p&lt;0.05; perfect predictor → p≈0; seed reproduceerbaar | ☑ |
 
 **Fase 0 gate:** alle tests groen vóór strategie-werk.
 
@@ -214,8 +214,8 @@ Next allowed action:
 [x] 0.1 Bollinger indicator + tests
 [x] 0.2 MACD indicator + tests
 [x] 0.3 Signal independence + tests
-[ ] 0.4 QuantLog payload extension + contract tests
-[ ] 0.5 QuantResearch permutation utility + tests
+[x] 0.4 QuantLog payload extension + contract tests
+[x] 0.5 QuantResearch permutation utility + tests
 
 [ ] 1.0 bb_only strategy
 [ ] 1.1 EXP-BB-MECH-001 config
@@ -263,6 +263,8 @@ Next allowed action:
 | 2026-05-17 | 0.1 | Bollinger indicator + 5 tests groen |
 | 2026-05-17 | 0.2 | MACD indicator + 7 tests groen |
 | 2026-05-17 | 0.3 | Signal independence filter + 5 tests groen |
+| 2026-05-17 | 0.4 | QuantLog `component_observed` / `candidate_signal` + contract tests |
+| 2026-05-17 | 0.5 | Permutation test utility in quantresearch |
 
 ---
 
