@@ -8,6 +8,8 @@ from src.quantbuild.indicators.swing import (
     pivot_lows,
 )
 from src.quantbuild.indicators.ma import ema, sma
+from src.quantbuild.indicators.bollinger import bollinger_bands
+from src.quantbuild.indicators.macd import macd
 
 __all__ = [
     "atr",
@@ -19,4 +21,6 @@ __all__ = [
     "pivot_lows",
     "ema",
     "sma",
+    "bollinger_bands",
+    "macd",
 ]
