@@ -30,6 +30,14 @@ def _sanitize_segment(name: str) -> str:
     return s or "unnamed"
 
 
+def _analytics_dest_name(src_name: str, *, run_id: str) -> str:
+    if src_name == f"{run_id}_inference_report.json":
+        return "inference_report.json"
+    if src_name == f"{run_id}_mfe_timing_report.json":
+        return "mfe_timing_report.json"
+    return src_name
+
+
 def discover_quantmetrics_os_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit.resolve()
@@ -89,11 +97,7 @@ def collect(
                 continue
             if p.suffix.lower() not in {".txt", ".md", ".json"}:
                 continue
-            dest_name = p.name
-            if p.name.endswith("_inference_report.json"):
-                dest_name = "inference_report.json"
-            elif p.name.endswith("_mfe_timing_report.json"):
-                dest_name = "mfe_timing_report.json"
+            dest_name = _analytics_dest_name(p.name, run_id=run_id)
             shutil.copy2(p, analytics_dir / dest_name)
             analytics_copied += 1
             if analytics_copied >= 40:

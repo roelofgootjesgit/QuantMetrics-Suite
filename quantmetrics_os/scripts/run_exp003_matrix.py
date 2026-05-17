@@ -67,6 +67,8 @@ def main() -> None:
     )
 
     print(f"\n[EXP-003] Matrix summary: {summary_path}")
+    if any(int(r["exit_code"]) != 0 for r in results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,15 @@ from src.quantbuild.export.trade_r_series import assert_quantlog_inference_polic
 logger = logging.getLogger(__name__)
 
 
+SUPPORTED_BACKTEST_ENGINES = {
+    "",
+    "sqe",
+    "sqe_backtest",
+    "ny_sweep_reversion",
+    "ny_sweep_failure_reclaim",
+}
+
+
 def _bar_timestamp_utc_iso(ts: Any) -> str:
     t = pd.Timestamp(ts)
     if t.tzinfo is None:
@@ -346,6 +355,13 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
     sl_r = bt_cfg.get("sl_r", 1.0)
     session_filter = bt_cfg.get("session_filter", None)
     session_mode = bt_cfg.get("session_mode", "killzone")
+    engine_name = str(bt_cfg.get("engine", "") or "").strip().lower()
+    if engine_name not in SUPPORTED_BACKTEST_ENGINES:
+        supported = ", ".join(sorted(e for e in SUPPORTED_BACKTEST_ENGINES if e))
+        raise ValueError(
+            f"Unsupported backtest.engine {engine_name!r}; "
+            f"supported engines: {supported} or unset SQE default."
+        )
 
     risk_cfg = cfg.get("risk", {})
     max_daily_loss_r = risk_cfg.get("max_daily_loss_r", 3.0)

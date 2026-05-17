@@ -74,6 +74,18 @@ class TestSimulateTrade:
 class TestBacktestQuantLog:
     """Backtest emits QuantLog JSONL when ``quantlog.enabled`` (same contract as live_runner)."""
 
+    def test_explicit_unknown_engine_fails_fast(self, tmp_path):
+        cfg = {
+            "symbol": "XAUUSD",
+            "timeframes": ["15m"],
+            "data": {"base_path": str(tmp_path / "data")},
+            "backtest": {"engine": "missing_engine", "default_period_days": 365},
+            "quantlog": {"enabled": False},
+        }
+
+        with pytest.raises(ValueError, match="Unsupported backtest.engine"):
+            run_backtest(cfg)
+
     def test_writes_events_when_quantlog_enabled(self, tmp_path, monkeypatch):
         import src.quantbuild.backtest.engine as eng
 
