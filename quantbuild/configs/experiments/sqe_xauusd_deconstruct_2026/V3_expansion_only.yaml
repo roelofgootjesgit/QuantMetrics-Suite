@@ -1,0 +1,10 @@
+# V3 — trade only in EXPANSION regime (trend permission layer off)
+
+extends: BASE.yaml
+
+regime_profiles:
+  trend:
+    skip: true
+
+artifacts:
+  experiment_id: EXP-SQE-XAUUSD-DECON-2026-V3

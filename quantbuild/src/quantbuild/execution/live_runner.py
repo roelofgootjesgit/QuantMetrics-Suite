@@ -987,6 +987,8 @@ class LiveRunner:
         pnl_abs: Optional[float] = None,
         mae_r: float = 0.0,
         mfe_r: float = 0.0,
+        mfe_peak_timestamp_utc: Optional[str] = None,
+        bars_to_mfe: Optional[int] = None,
     ) -> None:
         """Emit ``trade_closed`` for lifecycle closure (P0-D). Uses ENTER registration when available."""
         if not self._quantlog:
@@ -1014,6 +1016,10 @@ class LiveRunner:
             "session": eff_session,
             "regime": eff_regime,
         }
+        if mfe_peak_timestamp_utc is not None:
+            payload["mfe_peak_timestamp_utc"] = str(mfe_peak_timestamp_utc)
+        if bars_to_mfe is not None:
+            payload["bars_to_mfe"] = int(bars_to_mfe)
         if isinstance(eff_dcid, str) and eff_dcid.strip():
             payload["decision_cycle_id"] = eff_dcid.strip()
         self._quantlog.emit(

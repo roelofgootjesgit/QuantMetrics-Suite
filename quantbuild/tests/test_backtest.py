@@ -61,6 +61,9 @@ class TestSimulateTrade:
         result = _simulate_trade(df, 50, "LONG", 2.0, 1.0, _cache=cache)
         assert result["result"] in ("WIN", "LOSS", "TIMEOUT")
         assert result["entry_price"] > 0
+        assert "bars_to_mfe" in result and "mfe_peak_ts" in result
+        if result["mfe_r"] and result["mfe_r"] > 0:
+            assert result["bars_to_mfe"] is not None and result["mfe_peak_ts"] is not None
 
     def test_cache_consistency(self):
         df = _make_ohlcv(200)

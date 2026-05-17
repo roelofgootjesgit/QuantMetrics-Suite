@@ -9,6 +9,16 @@ Dit bestand vangt **methodologische en technische keuzes** vast die in de Cursor
 
 ---
 
+## 2026-05-04 — FREQ / EXP-A2 M5 **REJ-005** gecorrigeerd (`NO_TRADES_PIPELINE_ISSUE`)
+
+- **Probleem:** Rolling `exp_a2_m5_baseline` → `NO_TRADES` was geïnterpreteerd als “M5 heeft geen edge”. Dat is **niet** ondersteund: market-data smoke zegt alleen dat parquet/lezen OK is.
+- **Instrument:** `quantbuild/scripts/m5_engine_smoke.py` — laadt zelfde YAML, meet regime-verdeling, ruwe SQE (`run_sqe_conditions` vóór regime-loop), H1-gate, overlap met `regime==expansion`, daarna expansion `allowed_sessions` + `min_hour_utc`.
+- **Bevinding (XAUUSD, venster 2025):** ruwe SQE-signalen **> 0** (325 bars met any signal); na H1 nog 121 bars; **post-H1 ∧ expansion**: 35 bars; na expansion profile sessie/uur: **0**. Breakdown van die 35: **Asia 30, London 5** — buiten `New York`/`Overlap` van strict_prod expansion-profiel.
+- **Registry:** `REJ-005` herschreven — `reason`: `NO_TRADES_PIPELINE_ISSUE`, `registry_status`: `DIAGNOSTICS_COMPLETED`; geen economische “geen edge”-claim.
+- **Open:** M5 frequentie/edge als hypothese vereist **nieuwe** pre-reg (regime-thresholds op 5m, en/of sessiefilters); niet af te leiden uit enkel rolling counts.
+
+---
+
 ## 2026-05-04 — EXP-003 / HYP-003 **REJECT** (ledger + registry)
 
 - **Ledger:** `quantresearch/experiments/EXP-003/experiment.json` — `governance_status` REJECT, `academic_status` FAIL, `effective_status` REJECTED, `rejection_reason` zoals in bestand.

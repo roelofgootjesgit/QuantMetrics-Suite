@@ -1,0 +1,22 @@
+# Expansion-first SQE stack (XAUUSD): identical SQE entry logic; TREND regime does not trade.
+# Rationale: research verdict expansion-first — see
+#   quantresearch/experiments/EXP-MAE-MFE-REGIME-2026/
+#   quantresearch/experiments/EXP-SQE-XAUUSD-DECON-2026/
+#
+# Run like other deconstruct configs; set artifacts.experiment_id for your run folder.
+#
+# Full-calendar research: disable equity kill (999, not 0) so the backtest is not
+# truncated like BASE — see V4_trend_only_research_fullwindow.yaml.
+# For prod-style early-stop backtests, override to 10.0 in a child config.
+
+extends: ./BASE.yaml
+
+regime_profiles:
+  trend:
+    skip: true
+
+risk:
+  equity_kill_switch_pct: 999.0
+
+artifacts:
+  experiment_id: EXP-SQE-XAUUSD-EXPANSION-FIRST-DEFAULT

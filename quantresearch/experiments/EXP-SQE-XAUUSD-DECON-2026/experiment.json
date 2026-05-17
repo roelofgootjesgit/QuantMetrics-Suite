@@ -1,0 +1,85 @@
+{
+  "$schema": "../../schemas/experiment_ledger_v1.schema.json",
+  "experiment_id": "EXP-SQE-XAUUSD-DECON-2026",
+  "title": "SQE-XAUUSD strategy deconstruction — baseline A0 + variants V1–V5 (5y)",
+  "status": "completed",
+  "created_at_utc": "2026-05-04T16:30:00Z",
+  "completed_at_utc": "2026-05-04T16:30:00Z",
+  "matrix_type": "custom",
+  "baseline_run_id": "qb_run_20260504T162055Z_15a5d61a",
+  "canonical_artifact_path": "quantresearch/experiments/EXP-SQE-XAUUSD-DECON-2026/RUN_VERDICT.md",
+  "hypothesis_summary": "SQE combo ≥2/3 + regime/session/H1 gates: test expectancy, WR by regime, and H1-gate value vs A0_BASELINE; secondary: EXPANSION vs TREND split.",
+  "primary_metric": "expectancy_r",
+  "secondary_metrics": [
+    "win_rate",
+    "profit_factor",
+    "trade_count",
+    "max_drawdown_r"
+  ],
+  "promotion_decision": "VALIDATION_REQUIRED",
+  "discovery_tier": "mixed",
+  "next_action": "isolate_guard",
+  "next_experiment_id": null,
+  "suite": {
+    "suite_root": "C:/Users/Gebruiker/quantmetrics-suite",
+    "quantbuild_root": "C:/Users/Gebruiker/quantmetrics-suite/quantbuild",
+    "quantmetrics_os_root": "C:/Users/Gebruiker/quantmetrics-suite/quantmetrics_os",
+    "quantanalytics_root": "C:/Users/Gebruiker/quantmetrics-suite/quantanalytics"
+  },
+  "quantmetrics_os": {
+    "artifact_prefix": "EXP-SQE-XAUUSD-DECON-2026",
+    "folders": [
+      "runs/EXP-SQE-XAUUSD-DECON-2026-BASE/single",
+      "runs/EXP-SQE-XAUUSD-DECON-2026-V1/single",
+      "runs/EXP-SQE-XAUUSD-DECON-2026-V2/single",
+      "runs/EXP-SQE-XAUUSD-DECON-2026-V3/single",
+      "runs/EXP-SQE-XAUUSD-DECON-2026-V4/single",
+      "runs/EXP-SQE-XAUUSD-DECON-2026-V5/single"
+    ]
+  },
+  "quantresearch_files": {
+    "hypothesis_md": "hypothesis.md",
+    "experiment_plan_md": "experiment_plan.md",
+    "results_summary_md": "results_summary.md",
+    "decision_md": "decision.md",
+    "links_json": "links.json"
+  },
+  "matrix_definition": {
+    "base_config": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026/BASE.yaml",
+    "base_reference": "quantbuild/configs/_throughput_discovery/EXP-2021-2025-throughput-discovery-v1/A0_BASELINE.yaml",
+    "period_note": "backtest.default_period_days: 1825 (aligned 5y window on available cache)",
+    "variants": [
+      {
+        "key": "BASE",
+        "config": "sqe_xauusd_deconstruct_2026/BASE.yaml",
+        "run_id": "qb_run_20260504T162055Z_15a5d61a"
+      },
+      {
+        "key": "V1_h1_gate_off",
+        "config": "sqe_xauusd_deconstruct_2026/V1_h1_gate_off.yaml",
+        "run_id": "qb_run_20260504T162201Z_46b027c1"
+      },
+      {
+        "key": "V2_combo_min_3",
+        "config": "sqe_xauusd_deconstruct_2026/V2_combo_min_3.yaml",
+        "run_id": "qb_run_20260504T162543Z_520419a4"
+      },
+      {
+        "key": "V3_expansion_only",
+        "config": "sqe_xauusd_deconstruct_2026/V3_expansion_only.yaml",
+        "run_id": "qb_run_20260504T162302Z_f47b5814"
+      },
+      {
+        "key": "V4_trend_only",
+        "config": "sqe_xauusd_deconstruct_2026/V4_trend_only.yaml",
+        "run_id": "qb_run_20260504T162403Z_d657d221"
+      },
+      {
+        "key": "V5_lookback_3",
+        "config": "sqe_xauusd_deconstruct_2026/V5_lookback_3.yaml",
+        "run_id": "qb_run_20260504T162433Z_0ef5f4ec"
+      }
+    ]
+  },
+  "notes": "Verdict: RUN_VERDICT.md + AGENDA_DECISION.md. VALIDATION_REQUIRED all traded variants; V2 REJECT. Next: (1) year/session/regime slices on existing JSONL BASE+V3, V4 exit types; (2) V1 H1 guard attribution; (3) single V4 fixed-2R exit rerun for H4 — no new parameter matrix until then. Follow-up hypotheses H2–H4 in followup_hypotheses_H2_H4.md."
+}

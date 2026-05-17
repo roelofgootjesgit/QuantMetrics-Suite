@@ -1,0 +1,26 @@
+# B3 — trend als secundaire bucket (halve size, max 1 trade/sessie, NY-only) bovenop expansion-kern.
+# Baseline voor compare: expansion_first_default.yaml (zuivere expansion-only).
+# Grenzen: zie FREQ_B3_VERDICT in research log / FREQ_EXP_COMPARISON.
+
+extends: expansion_first_default.yaml
+
+regime_profiles:
+  trend:
+    skip: false
+    tp_r: 2.0
+    sl_r: 1.0
+    max_trades_per_session: 1
+    position_size_mult: 0.5
+    allowed_sessions:
+      - New York
+  expansion:
+    tp_r: 2.0
+    sl_r: 1.0
+    max_trades_per_session: 3
+    position_size_mult: 1.0
+    allowed_sessions:
+      - New York
+      - Overlap
+    min_hour_utc: 10
+  compression:
+    skip: true

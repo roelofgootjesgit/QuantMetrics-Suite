@@ -1,0 +1,11 @@
+# Expansion-first kernel: zelfde SQE-stack als strict_prod_v2, alleen expansion-regime handelt.
+# Trend en compression uit (compression staat in parent al op skip; hier expliciet voor heldere intent).
+# Rolling: `python scripts/rolling_year_runner.py --config configs/expansion_first_default.yaml ...`
+
+extends: strict_prod_v2.yaml
+
+regime_profiles:
+  trend:
+    skip: true
+  compression:
+    skip: true

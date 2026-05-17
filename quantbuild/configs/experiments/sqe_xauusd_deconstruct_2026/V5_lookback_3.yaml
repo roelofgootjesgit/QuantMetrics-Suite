@@ -1,0 +1,9 @@
+# V5 — entry_sweep_disp_fvg_lookback_bars: 3 (tighter temporal clustering)
+
+extends: BASE.yaml
+
+strategy:
+  entry_sweep_disp_fvg_lookback_bars: 3
+
+artifacts:
+  experiment_id: EXP-SQE-XAUUSD-DECON-2026-V5

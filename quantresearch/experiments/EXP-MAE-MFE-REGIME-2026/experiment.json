@@ -1,0 +1,19 @@
+{
+  "experiment_id": "EXP-MAE-MFE-REGIME-2026",
+  "title": "MAE/MFE distributie TREND vs EXPANSION (QuantLog, geen nieuwe run)",
+  "status": "completed",
+  "inputs": [
+    "quantmetrics_os/runs/EXP-SQE-XAUUSD-DECON-2026-BASE/single/quantlog_events.jsonl",
+    "quantmetrics_os/runs/EXP-SQE-XAUUSD-DECON-2026-V3/single/quantlog_events.jsonl",
+    "quantmetrics_os/runs/EXP-V4-EXIT-FIX-2026/single/quantlog_events.jsonl"
+  ],
+  "scripts": [
+    "quantresearch/scripts/mae_mfe_regime_from_quantlog.py",
+    "quantresearch/scripts/regime_attribution_from_quantlog.py"
+  ],
+  "reports": [
+    "quantresearch/experiments/EXP-MAE-MFE-REGIME-2026/QUANTLOG_FIELDS_MAE_MFE.md",
+    "quantresearch/experiments/EXP-MAE-MFE-REGIME-2026/MAE_MFE_REPORT.md"
+  ],
+  "default_config_expansion_first": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026/EXPANSION_FIRST_DEFAULT.yaml"
+}

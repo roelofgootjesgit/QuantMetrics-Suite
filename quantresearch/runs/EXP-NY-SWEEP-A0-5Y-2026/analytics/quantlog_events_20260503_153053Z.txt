@@ -1,0 +1,208 @@
+Total events: 160
+
+Event types:
+  - signal_detected: 20
+  - signal_evaluated: 20
+  - risk_guard_decision: 20
+  - trade_action: 20
+  - order_submitted: 20
+  - order_filled: 20
+  - trade_executed: 20
+  - trade_closed: 20
+
+NO TRADE ANALYSIS
+(no trade_action with decision=NO_ACTION)
+
+SIGNAL FUNNEL
+(QuantBuild rows only when source_system is present; same trace may emit multiple events)
+
+  signal_detected: 20
+  signal_evaluated: 20
+  risk_guard_decision (ALLOW only): 20
+  trade_action (ENTER/REVERSE): 20
+
+  signal_detected -> signal_evaluated: 100.0% retained (0.0% drop)
+  signal_evaluated -> risk_guard_decision (ALLOW only): 100.0% retained (0.0% drop)
+  risk_guard_decision (ALLOW only) -> trade_action (ENTER/REVERSE): 100.0% retained (0.0% drop)
+
+PERFORMANCE
+
+  trade_action events: 20
+  order_filled events: 20
+
+  Numeric payload columns present: payload_pnl_r, payload_mae_r, payload_mfe_r
+  payload_pnl_r: n=20 mean=0.2000 median=-1.0000
+  payload_mae_r: n=20 mean=0.9686 median=1.0131
+  payload_mfe_r: n=20 mean=1.0911 median=0.7551
+
+REGIME / CONTEXT
+
+  signal_evaluated by regime (volume proxy):
+    expansion: 11
+    trend: 6
+    compression: 3
+
+  signal_evaluated by session:
+    New York: 16
+    Asia: 4
+
+  ENTER/REVERSE trade_action by regime (via trace -> last signal_evaluated):
+    expansion: 11
+    trend: 6
+    compression: 3
+
+  Expectancy per regime needs payload_pnl_r (or closed-trade events); extend schema or Sprint 4 joins when available.
+
+=== KEY FINDINGS ===
+
+{
+  "headline": "data/context integrity issues dominate interpretation; regime expectancy differs materially",
+  "top_problems": [
+    "session: present on 100.0% of signal_evaluated rows (20 rows)",
+    "setup_type: present on 100.0% of signal_evaluated rows (20 rows)",
+    "regime: present on 100.0% of signal_evaluated rows (20 rows)"
+  ],
+  "top_edges": [
+    "trend: mean_r=1.000 (n=6)",
+    "compression: mean_r=0.000 (n=3)",
+    "expansion: mean_r=-0.182 (n=11)"
+  ],
+  "top_blockers": [],
+  "system_state": [
+    "Closed-trade expectancy (overall): mean_r=0.200 over n=20",
+    "Exit efficiency (median capture vs |MFE|): ~126%",
+    "Raw funnel counts: detected=20, evaluated=20, ENTER/REVERSE=20"
+  ]
+}
+
+RESEARCH DIAGNOSTICS (ANALYTICS_OUTPUT_GAPS-style)
+
+
+=== DATA QUALITY ===
+
+{
+  "event_counts": {
+    "signal_detected": 20,
+    "signal_evaluated": 20,
+    "risk_guard_decision": 20,
+    "trade_action": 20,
+    "order_submitted": 20,
+    "order_filled": 20,
+    "trade_executed": 20,
+    "trade_closed": 20
+  },
+  "anomalies": [],
+  "missing_decision_cycle_id_on_chain_rows": 0,
+  "duplicate_decision_cycle_ids_with_multiple_trade_action_rows": 0,
+  "duplicate_trade_id_on_envelope": 0
+}
+
+=== DECISION CYCLE FUNNEL ===
+
+{
+  "unique_decision_cycles": 20,
+  "cycle_stage_presence": {
+    "has_signal_detected": 20,
+    "has_signal_evaluated": 20,
+    "has_risk_guard_decision": 20,
+    "terminal_enter": 20,
+    "terminal_no_action": 0,
+    "terminal_other_or_missing": 0
+  },
+  "cycles_signal_evaluated_without_signal_detected": 0,
+  "cycles_with_order_filled": 20,
+  "cycles_with_trade_closed": 20,
+  "terminal_trade_action_mix": {
+    "ENTER": 20
+  }
+}
+
+=== LIFECYCLE STATUS ===
+
+{
+  "trade_action_enter_rows": 20,
+  "order_filled_events": 20,
+  "trade_closed_events": 20,
+  "filled_minus_closed": 0,
+  "note": "filled_minus_closed approximates outstanding closes if 1:1 fill→close mapping"
+}
+
+=== CONTEXT COMPLETENESS ===
+
+{
+  "rows": 20,
+  "session": {
+    "present_pct": 100.0
+  },
+  "regime": {
+    "present_pct": 100.0
+  },
+  "setup_type": {
+    "present_pct": 100.0
+  },
+  "signal_type": {
+    "present_pct": 100.0
+  },
+  "confidence": {
+    "present_pct": 100.0
+  }
+}
+
+=== GUARD DIAGNOSTICS ===
+
+{
+  "blocks_total": 0
+}
+
+=== EXPECTANCY SLICES ===
+
+{
+  "metric_column": "payload_pnl_r",
+  "overall": {
+    "n": 20,
+    "mean_r": 0.20000000000000112
+  },
+  "by_regime_on_close": {
+    "compression": {
+      "n": 3,
+      "mean_r": 0.0,
+      "sum_r": 0.0
+    },
+    "expansion": {
+      "n": 11,
+      "mean_r": -0.18181818181818182,
+      "sum_r": -2.0
+    },
+    "trend": {
+      "n": 6,
+      "mean_r": 1.0000000000000038,
+      "sum_r": 6.000000000000022
+    }
+  },
+  "by_session_on_close": {
+    "Asia": {
+      "n": 4,
+      "mean_r": -0.25,
+      "sum_r": -1.0
+    },
+    "New York": {
+      "n": 16,
+      "mean_r": 0.3125000000000014,
+      "sum_r": 5.000000000000022
+    }
+  }
+}
+
+=== EXIT EFFICIENCY ===
+
+{
+  "rows": 20,
+  "avg_realized_r": 0.20000000000000112,
+  "avg_abs_mae_r": 0.9686353341281171,
+  "avg_abs_mfe_r": 1.0910885206241554,
+  "median_capture_ratio_abs_r_over_abs_mfe": 1.2637290365011666,
+  "exit_tag_counts": {
+    "SL": 12,
+    "TP": 8
+  }
+}

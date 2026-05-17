@@ -1,0 +1,10 @@
+{
+  "experiment_id": "EXP-SLICE-BASE-2026",
+  "slice_script": "quantresearch/scripts/slice_exp_slice_base_2026.py",
+  "source_experiment": "EXP-SQE-XAUUSD-DECON-2026",
+  "report": "SLICE_REPORT.md",
+  "metrics_json": "slice_metrics.json",
+  "diagnosis": "DIAGNOSIS_DATA_INTEGRITY.md",
+  "equity_curve_option_b": "EQUITY_CURVE_OPTION_B.md",
+  "equity_script": "../../scripts/equity_curve_from_quantlog.py"
+}

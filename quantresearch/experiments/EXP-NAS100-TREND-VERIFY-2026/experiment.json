@@ -1,0 +1,26 @@
+{
+  "experiment_id": "EXP-NAS100-TREND-VERIFY-2026",
+  "title": "NAS100 trend-only SQE verify (expansion skip, 0.5x size, kill uit)",
+  "status": "completed",
+  "run_id": "qb_run_20260504T182930Z_22feb34e",
+  "results": {
+    "n": 117,
+    "sum_pnl_r": -16.5,
+    "wr_pct": 23.9,
+    "pf": 0.63,
+    "promotion_pass": false
+  },
+  "config": "quantbuild/configs/experiments/exp_nas100_trend_verify_2026/NAS100_trend_only_fullwindow.yaml",
+  "benchmark_from_profiles": {
+    "_5yr_trend_trades": 956,
+    "_5yr_trend_only_exp_R": 0.106,
+    "_5yr_trend_only_total_R": 101.3,
+    "risk_multiplier": 0.5
+  },
+  "promotion_criteria": {
+    "n_min": 100,
+    "expectancy_r_per_trade_gt": 0,
+    "pf_min": 1.1,
+    "notes": "scaled_pnl_r reflects position_size_mult 0.5 — vergelijk verwachting als fractie van profile-run."
+  }
+}

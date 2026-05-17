@@ -1,0 +1,44 @@
+{
+  "$schema": "../../schemas/experiment_ledger_v1.schema.json",
+  "experiment_id": "EXP-V4-EXIT-FIX-2026",
+  "title": "Trend-only SQE + fixed 2R/1R research window (kill switch disabled)",
+  "status": "completed",
+  "created_at_utc": "2026-05-04T17:15:00Z",
+  "completed_at_utc": "2026-05-04T17:25:00Z",
+  "matrix_type": "custom",
+  "baseline_run_id": null,
+  "canonical_artifact_path": "quantmetrics_os/runs/EXP-V4-EXIT-FIX-2026/single",
+  "hypothesis_summary": "Isolate TREND regime entries with expansion skipped; full chronological processing without equity kill stop; SQE backtest uses fixed tp/sl only (no live trail).",
+  "primary_metric": "expectancy_r",
+  "secondary_metrics": [
+    "profit_factor",
+    "max_drawdown_r",
+    "trade_count",
+    "equity_path_vs_peak"
+  ],
+  "promotion_decision": "VALIDATION_REQUIRED",
+  "discovery_tier": "watchlist",
+  "next_action": "isolate_guard",
+  "notes": "run_id=qb_run_20260504T172007Z_1de3437f. Engine simulator fixed R exits only. Compared to original V4 (n=34): full window n=137, net ~+51.6R headline but PF<1 and final cum path negative on equity reconstruction — see results_summary.md.",
+  "suite": {
+    "suite_root": "C:/Users/Gebruiker/quantmetrics-suite",
+    "quantbuild_root": "C:/Users/Gebruiker/quantmetrics-suite/quantbuild",
+    "quantmetrics_os_root": "C:/Users/Gebruiker/quantmetrics-suite/quantmetrics_os",
+    "quantanalytics_root": "C:/Users/Gebruiker/quantmetrics-suite/quantanalytics"
+  },
+  "quantresearch_files": {
+    "hypothesis_md": "hypothesis.md",
+    "experiment_plan_md": "experiment_plan.md",
+    "results_summary_md": "results_summary.md",
+    "decision_md": "decision.md",
+    "links_json": "links.json"
+  },
+  "matrix_definition": {
+    "config": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026/V4_trend_only_research_fullwindow.yaml",
+    "parent_configs": [
+      "V4_trend_only.yaml",
+      "BASE.yaml",
+      "A0_BASELINE.yaml"
+    ]
+  }
+}

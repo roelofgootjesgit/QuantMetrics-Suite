@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/experiment_ledger_v1.schema.json",
+  "experiment_id": "EXP-SLICE-BASE-2026",
+  "title": "BASE/V3 year & session slices + V4 exit tags (QuantLog only, no new backtest)",
+  "status": "completed",
+  "created_at_utc": "2026-05-04T17:00:00Z",
+  "completed_at_utc": "2026-05-04T17:45:00Z",
+  "matrix_type": "custom",
+  "baseline_run_id": "qb_run_20260504T162055Z_15a5d61a",
+  "canonical_artifact_path": "quantresearch/experiments/EXP-SLICE-BASE-2026/SLICE_REPORT.md",
+  "hypothesis_summary": "Time and session stability of SQE XAUUSD BASE; expansion-only (V3) year concentration; V4 exit driver (TP vs SL vs TIMEOUT) for H4.",
+  "primary_metric": "yearly_net_r_stability",
+  "secondary_metrics": [
+    "win_rate_by_year",
+    "session_split",
+    "exit_tag_distribution"
+  ],
+  "promotion_decision": "REJECT",
+  "discovery_tier": "watchlist",
+  "next_action": "rerun",
+  "notes": "Verdict: BASE REJECT for FTMO/funded single-stack use — see decision.md + EQUITY_CURVE_OPTION_B. Calendar slices on old artifact INCONCLUSIVE for coverage; DD verdict conclusive. Hold frequency scale-up per FTMO_FREQUENCY_PLAN.",
+  "quantresearch_files": {
+    "hypothesis_md": "hypothesis.md",
+    "experiment_plan_md": "experiment_plan.md",
+    "results_summary_md": "SLICE_REPORT.md",
+    "decision_md": "decision.md",
+    "links_json": "links.json"
+  },
+  "matrix_definition": {
+    "type": "slice_analysis",
+    "script": "quantresearch/scripts/slice_exp_slice_base_2026.py"
+  }
+}

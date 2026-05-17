@@ -27,6 +27,88 @@
       },
       "reason": "economic_gate_fail_all_instruments",
       "learned": "H1 overlap breakout is mean-reverting on EURUSD/GBPUSD. NAS100 shows weak continuation signal (ci_lower=0.017) — warrants isolated follow-up at lower timeframe or different TP multiplier if pre-registered separately."
+    },
+    {
+      "id": "REJ-003",
+      "date": "2026-05-04",
+      "statement": "EXP-B3 — Trend als secundaire bucket (0.5× size, NY-only, max 1 trade/sessie) op expansion_first_default haalt vooraf geregistreerde frequentiegrens (>10 trades/jaar mediaan) met behoud van edge-vloeren.",
+      "evidence_experiment_id": "EXP-B3-FREQ",
+      "metrics": {
+        "rolling_report": "quantbuild/reports/rolling/exp_b3_rolling.json",
+        "years": "2022–2025",
+        "median_trades_per_year": 9.5,
+        "median_mean_r": 0.656,
+        "median_pf": 3.4,
+        "median_max_dd_r": -1.5,
+        "years_positive_mean_r": "4/4",
+        "gates": {
+          "mean_r_gt_0_60": true,
+          "pf_gt_2_5": true,
+          "trades_gt_10": false,
+          "consistency_4_4": true
+        }
+      },
+      "reason": "frequency_gate_fail",
+      "learned": "Halve trend-sampling verbetert versus strict_prod-volledige trend-mix, maar mediaan volume blijft 9.5 vs drempel >10 — onder voorwaarde voor WATCHLIST/B4. Mean R (0.656) en PF (3.4) haalden wel de edge-vloeren."
+    },
+    {
+      "id": "REJ-004",
+      "date": "2026-05-04",
+      "statement": "Optie B (regime/tuning op M15) kan de expansion-first edge-context structureel opschalen in trade-frequentie binnen één pre-registered hygiëne-pad.",
+      "evidence_experiment_id": "FREQ-OPT-B-2022-2025",
+      "metrics": {
+        "B1": "NO_EFFECT (expansion_threshold 1.3 vs strict_prod_v2)",
+        "B2": "skipped (B1 < WATCHLIST)",
+        "B3": "REJ-003 — median 9.5 trades/yr vs gate >10",
+        "B4": "not run (B3 failed)",
+        "expansion_first_m15_median_trades_per_year": 4.5,
+        "note": "Interpreteer als FREQ_CEILING_REACHED op M15 voor deze stack, geen 'verkeerde YAML'."
+      },
+      "reason": "FREQ_CEILING_REACHED",
+      "learned": "Frequentieplafond op 15m in deze edge-context; volgende hefboom is tijdframe (M5) of expliciet andere strategie, niet nóg een M15-knop."
+    },
+    {
+      "id": "REJ-005",
+      "date": "2026-05-04",
+      "statement": "EXP-A2 — Onder dezelfde expansion-first config is bewezen dat M5 per se 'geen edge' heeft (als conclusie uit enkel NO_TRADES backtests).",
+      "evidence_experiment_id": "EXP-A2-M5",
+      "metrics": {
+        "rolling_report": "quantbuild/reports/rolling/exp_a2_m5_baseline_rolling.json",
+        "observed": "rolling NO_TRADES all years; market_data_smoke 5m PASS",
+        "diagnostic_script": "quantbuild/scripts/m5_engine_smoke.py",
+        "diagnostic_sample_year": 2025,
+        "diagnostic_XAUUSD_2025": {
+          "m5_bars": 53855,
+          "regime_expansion_pct_bars": 2.9,
+          "raw_sqe_any_signal_bars": 325,
+          "post_h1_any_signal_bars": 121,
+          "post_h1_and_regime_expansion_bars": 35,
+          "post_session_hour_expansion_profile_bars": 0,
+          "post_h1_expansion_session_breakdown": { "Asia": 30, "London": 5 }
+        },
+        "interpretation": "SQE fires on M5; H1 gate leaves candidates; expansion-only + expansion regime_profile (NY+Overlap, min_hour>=10) yields zero executable bars on this sample because remaining expansion+H1 signals fall in Asia/London (outside allowed_sessions)."
+      },
+      "reason": "NO_TRADES_PIPELINE_ISSUE",
+      "registry_status": "DIAGNOSTICS_COMPLETED",
+      "learned": "NO_TRADES falsificeert niet 'M5 heeft geen edge'. Het bewijst: deze config/stack laat geen trades door — oorzaak niet gemeten tot engine-diagnose. Diagnose (2025 slice): ruwe ICT signalen > 0; blokkade na regime+session filters (geen NY/Overlap overlap voor expansion+H1 kandidaten). Geen claim over marktstructuur; wel claim over configuratie-interactie op M5. Edge-hypothese op M5 vereist apart pre-registratie-onderzoek (regime-calibratie en/of sessiefilters), niet af te leiden uit rolling alleen."
+    },
+    {
+      "id": "REJ-006",
+      "date": "2026-05-12",
+      "statement": "XAUUSD M5 PDH/PDL liquidity sweep with reclaim + displacement + micro structure shift during London/NY (UTC) yields positive expectancy at 1.5R vs sweep-based SL (0.1 ATR buffer), without trend-aware selection.",
+      "evidence_experiment_id": "EXP-004",
+      "metrics": {
+        "baseline_enter_total": 98,
+        "baseline_expectancy_r": -0.11,
+        "baseline_profit_factor": 0.82,
+        "subset_a_n": 72,
+        "subset_a_expectancy_r": 0.01,
+        "htf_bias_enter_total": 29,
+        "htf_bias_expectancy_r": -0.14,
+        "manifest": "quantresearch/experiments/EXP-004/results_manifest.json"
+      },
+      "reason": "negative_or_null_expectancy_across_configurations",
+      "learned": "Mid sweep-depth bucket (0.30–0.60 ATR) consistently weak; 2025 trend-regime slice descriptive only (n too small). HTF 4H EMA bias filter removed ~70% of ENTERs and did not improve aggregate expectancy. Outcome sim index alignment vs detector year-slice is a known footgun — document file-year aggregation. Next hypothesis should pre-register trend-regime focus with longer M5 history, not more filters on the same detector."
     }
   ]
 }

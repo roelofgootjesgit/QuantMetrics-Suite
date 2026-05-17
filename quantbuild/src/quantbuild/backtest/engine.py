@@ -170,6 +170,8 @@ def _simulate_trade(data: pd.DataFrame, i: int, direction: str, tp_r: float, sl_
     result = "TIMEOUT"
     max_favorable = 0.0
     max_adverse = 0.0
+    mfe_j: Optional[int] = None
+    mfe_ts: Any = None
 
     for j in range(i + 1, n):
         lo, hi = low_arr[j], high_arr[j]
@@ -183,7 +185,10 @@ def _simulate_trade(data: pd.DataFrame, i: int, direction: str, tp_r: float, sl_
                 break
             if hi >= tp:
                 exit_price, result, exit_ts = tp, "WIN", ts_arr[j]
+                old_mf = max_favorable
                 max_favorable = max(max_favorable, favorable)
+                if max_favorable > old_mf:
+                    mfe_j, mfe_ts = j, ts_arr[j]
                 break
         else:
             favorable = entry_price - lo
@@ -194,10 +199,16 @@ def _simulate_trade(data: pd.DataFrame, i: int, direction: str, tp_r: float, sl_
                 break
             if lo <= tp:
                 exit_price, result, exit_ts = tp, "WIN", ts_arr[j]
+                old_mf = max_favorable
                 max_favorable = max(max_favorable, favorable)
+                if max_favorable > old_mf:
+                    mfe_j, mfe_ts = j, ts_arr[j]
                 break
 
+        old_mf = max_favorable
         max_favorable = max(max_favorable, favorable)
+        if max_favorable > old_mf:
+            mfe_j, mfe_ts = j, ts_arr[j]
         max_adverse = max(max_adverse, adverse)
 
         if j == n - 1:
@@ -209,10 +220,14 @@ def _simulate_trade(data: pd.DataFrame, i: int, direction: str, tp_r: float, sl_
     profit_usd = (exit_price - entry_price) if direction == "LONG" else (entry_price - exit_price)
     profit_r = calculate_rr(entry_price, exit_price, sl, direction)
 
+    bars_to_mfe = (mfe_j - i) if mfe_j is not None else None
+
     return {
         "entry_price": entry_price, "exit_price": exit_price, "sl": sl, "tp": tp,
         "exit_ts": exit_ts, "profit_usd": profit_usd, "profit_r": profit_r,
         "result": result, "atr": atr, "mae_r": mae_r, "mfe_r": mfe_r,
+        "mfe_peak_ts": mfe_ts,
+        "bars_to_mfe": bars_to_mfe,
     }
 
 
@@ -250,6 +265,8 @@ def _simulate_trade_price_levels(
     exit_bar_idx = entry_i
     max_favorable = 0.0
     max_adverse = 0.0
+    mfe_j: Optional[int] = None
+    mfe_ts: Any = None
 
     for j in range(entry_i + 1, n):
         lo, hi = float(low_arr[j]), float(high_arr[j])
@@ -263,7 +280,10 @@ def _simulate_trade_price_levels(
                 break
             if hi >= tp:
                 exit_price, result, exit_ts, exit_bar_idx = tp, "WIN", ts_arr[j], j
+                old_mf = max_favorable
                 max_favorable = max(max_favorable, favorable)
+                if max_favorable > old_mf:
+                    mfe_j, mfe_ts = j, ts_arr[j]
                 break
         else:
             favorable = entry_price - lo
@@ -274,10 +294,16 @@ def _simulate_trade_price_levels(
                 break
             if lo <= tp:
                 exit_price, result, exit_ts, exit_bar_idx = tp, "WIN", ts_arr[j], j
+                old_mf = max_favorable
                 max_favorable = max(max_favorable, favorable)
+                if max_favorable > old_mf:
+                    mfe_j, mfe_ts = j, ts_arr[j]
                 break
 
+        old_mf = max_favorable
         max_favorable = max(max_favorable, favorable)
+        if max_favorable > old_mf:
+            mfe_j, mfe_ts = j, ts_arr[j]
         max_adverse = max(max_adverse, adverse)
 
         if j == n - 1:
@@ -292,6 +318,8 @@ def _simulate_trade_price_levels(
     profit_usd = (exit_price - entry_price) if direction == "LONG" else (entry_price - exit_price)
     profit_r = calculate_rr(entry_price, exit_price, sl, direction)
 
+    bars_to_mfe = (mfe_j - entry_i) if mfe_j is not None else None
+
     return {
         "entry_price": entry_price,
         "exit_price": exit_price,
@@ -304,6 +332,8 @@ def _simulate_trade_price_levels(
         "result": result,
         "mae_r": mae_r,
         "mfe_r": mfe_r,
+        "mfe_peak_ts": mfe_ts,
+        "bars_to_mfe": bars_to_mfe,
     }
 
 
@@ -446,6 +476,20 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
             data["regime"] = regime_series
         except (ImportError, Exception) as e:
             logger.debug("Regime detection skipped: %s", e)
+
+    if str((cfg.get("backtest") or {}).get("engine", "")).lower() == "london_ny_overlap_breakout":
+        from src.quantbuild.strategies.london_ny_overlap_breakout import run_london_ny_overlap_breakout_backtest
+
+        return run_london_ny_overlap_breakout_backtest(
+            cfg,
+            data,
+            start=start,
+            end=end,
+            base_path=base_path,
+            symbol=symbol,
+            tf=tf,
+            regime_series=regime_series,
+        )
 
     if str((cfg.get("backtest") or {}).get("engine", "")).lower() == "ny_sweep_reversion":
         from src.quantbuild.strategies.ny_sweep_reversion_engine import run_ny_sweep_backtest
@@ -834,6 +878,11 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
                 },
             )
             exit_ts_iso = _bar_timestamp_utc_iso(result["exit_ts"])
+            mfe_peak_iso = (
+                _bar_timestamp_utc_iso(result["mfe_peak_ts"])
+                if result.get("mfe_peak_ts") is not None
+                else None
+            )
             ql_emitter.emit(
                 event_type="trade_closed",
                 trace_id=trace_id,
@@ -852,6 +901,8 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
                     "pnl_r": float(result["profit_r"]),
                     "mae_r": float(result["mae_r"]),
                     "mfe_r": float(result["mfe_r"]),
+                    "mfe_peak_timestamp_utc": mfe_peak_iso,
+                    "bars_to_mfe": result.get("bars_to_mfe"),
                     "outcome": result["result"],
                     "exit": _exit_tag_from_simulator(result["result"]),
                     "session": current_session,
@@ -889,6 +940,12 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
     logger.info("%s %s: %d trades (LONG: %d, SHORT: %d)", symbol, tf, len(trades),
                 sum(1 for t in trades if t.direction == "LONG"),
                 sum(1 for t in trades if t.direction == "SHORT"))
+    # With consolidated_run_file, no bar may emit — still need a file for collect + provenance.
+    if ql_emitter and getattr(ql_emitter, "consolidated_path", None) is not None:
+        _cp = ql_emitter.consolidated_path
+        if _cp is not None and not _cp.is_file():
+            _cp.parent.mkdir(parents=True, exist_ok=True)
+            _cp.write_text("", encoding="utf-8")
     if regime_skip_count:
         logger.info("Regime skipped: %d entries (COMPRESSION)", regime_skip_count)
     if regime_session_skip_count:

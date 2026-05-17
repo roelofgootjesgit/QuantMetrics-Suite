@@ -1,0 +1,9 @@
+# V1 — structure_use_h1_gate: false (guard impact test)
+
+extends: BASE.yaml
+
+strategy:
+  structure_use_h1_gate: false
+
+artifacts:
+  experiment_id: EXP-SQE-XAUUSD-DECON-2026-V1

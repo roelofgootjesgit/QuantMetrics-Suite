@@ -914,6 +914,11 @@ def run_ny_sweep_backtest(
                 },
             )
             exit_ts_iso = _bar_timestamp_utc_iso(result["exit_ts"])
+            mfe_peak_iso = (
+                _bar_timestamp_utc_iso(result["mfe_peak_ts"])
+                if result.get("mfe_peak_ts") is not None
+                else None
+            )
             ql_emitter.emit(
                 event_type="trade_closed",
                 trace_id=trace_id,
@@ -932,6 +937,8 @@ def run_ny_sweep_backtest(
                     "pnl_r": float(result["profit_r"]),
                     "mae_r": float(result["mae_r"]),
                     "mfe_r": float(result["mfe_r"]),
+                    "mfe_peak_timestamp_utc": mfe_peak_iso,
+                    "bars_to_mfe": result.get("bars_to_mfe"),
                     "outcome": result["result"],
                     "exit": _exit_tag_from_simulator(result["result"]),
                     "session": current_session,

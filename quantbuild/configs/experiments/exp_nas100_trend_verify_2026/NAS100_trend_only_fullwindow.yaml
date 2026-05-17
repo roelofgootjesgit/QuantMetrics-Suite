@@ -1,0 +1,43 @@
+# EXP-NAS100-TREND-VERIFY-2026 — Trend-only SQE, expansion uit, volledig venster
+#
+# Doel: NAS100 trend-expectancy reproduceren in huidige engine (instrument_profiles:
+#   trend ~956 trades / 5yr, exp ~+0.106R totaal ~+101R — benchmark uit profiles).
+# Risk: position_size_mult 0.5 (= instrument risk_multiplier 0.5) schaalt pnl_r in backtest.
+#
+# Zie: quantresearch/experiments/EXP-NAS100-TREND-VERIFY-2026/
+
+extends: ../sqe_xauusd_deconstruct_2026/V4_trend_only.yaml
+
+symbol: NAS100
+
+backtest:
+  session_mode: standard
+
+broker:
+  instrument: NAS100_USD
+  mock_price: 21000.0
+
+execution_guards:
+  max_spread_pips: 3.0
+  max_slippage_r: 0.20
+
+regime_profiles:
+  expansion:
+    skip: true
+  trend:
+    tp_r: 2.0
+    sl_r: 1.0
+    position_size_mult: 0.5
+    max_trades_per_session: 3
+    allowed_sessions:
+      - Overlap
+      - New York
+
+risk:
+  equity_kill_switch_pct: 999.0
+
+artifacts:
+  enabled: true
+  experiment_id: EXP-NAS100-TREND-VERIFY-2026
+  role: single
+  bundle_analytics: true

@@ -34,6 +34,7 @@ _VALID_REPORTS = frozenset(
         "research",
         "inference",
         "mfe_timing",
+        "tp_headroom",
     }
 )
 
@@ -256,16 +257,17 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         metavar="LIST",
         help=(
             "Comma-separated sections or 'all'. "
-            "Choices: summary, no-trade, funnel, performance, regime, research, inference, mfe_timing "
+            "Choices: summary, no-trade, funnel, performance, regime, research, inference, mfe_timing, tp_headroom "
             "(research = ANALYTICS_OUTPUT_GAPS-style diagnostics; inference = per-trade R report JSON; "
-            "mfe_timing = TP trades bars_to_mfe vs pnl_r JSON artifact)."
+            "mfe_timing = TP trades bars_to_mfe vs pnl_r JSON artifact; "
+            "tp_headroom = exploratory mfe_r vs pnl_r headroom, not in 'all')."
         ),
     )
     parser.add_argument(
         "--experiment-id",
         default="",
         metavar="ID",
-        help="For inference reports: experiment label stored in JSON (default empty).",
+        help="Experiment label in inference / mfe_timing / tp_headroom JSON (default empty).",
     )
     parser.add_argument(
         "--bootstrap-tier",
@@ -475,6 +477,29 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         mfe_timing_meta = format_mfe_timing_text_summary(mfe_timing_report_obj)
         print(f"MFE timing report written: {mfe_timing_path}", file=sys.stderr)
 
+    tp_headroom_path: Path | None = None
+    tp_headroom_report_obj: dict | None = None
+    tp_headroom_meta: str = ""
+    if "tp_headroom" in reports:
+        from quantmetrics_analytics.analysis.tp_headroom import (
+            format_tp_headroom_text_summary,
+            run_tp_headroom_for_events,
+        )
+
+        try:
+            tp_headroom_path, tp_headroom_report_obj = run_tp_headroom_for_events(
+                events,
+                paths,
+                run_id_explicit=run_id_filter,
+                experiment_id=str(getattr(args, "experiment_id", "") or "").strip() or "unknown",
+                output_dir=_output_rapport_dir(),
+            )
+        except Exception as exc:
+            print(f"TP headroom report failed: {exc}", file=sys.stderr)
+            return 5
+        tp_headroom_meta = format_tp_headroom_text_summary(tp_headroom_report_obj)
+        print(f"TP headroom report written: {tp_headroom_path}", file=sys.stderr)
+
     export_path = getattr(args, "export_decisions_tsv", None)
     if export_path is not None:
         dec = trade_actions_to_decisions_df(events)
@@ -532,7 +557,7 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         print(f"Run summary Markdown written to: {md_dest}", file=sys.stderr)
 
     blocks: list[str] = []
-    report_names = [n for n in reports if n not in ("inference", "mfe_timing")]
+    report_names = [n for n in reports if n not in ("inference", "mfe_timing", "tp_headroom")]
     for name in report_names:
         if name == "summary":
             blocks.append(format_event_summary(df))
@@ -552,6 +577,8 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         blocks.append(inference_meta.rstrip())
     if mfe_timing_meta:
         blocks.append(mfe_timing_meta.rstrip())
+    if tp_headroom_meta:
+        blocks.append(tp_headroom_meta.rstrip())
 
     text = "\n".join(blocks)
 
@@ -561,6 +588,14 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         if reports == ["mfe_timing"] and mfe_timing_report_obj is not None:
             print(
                 json.dumps(mfe_timing_report_obj, indent=2, ensure_ascii=False),
+                file=stdout,
+                end="",
+            )
+            if not text.endswith("\n"):
+                print(file=stdout)
+        elif reports == ["tp_headroom"] and tp_headroom_report_obj is not None:
+            print(
+                json.dumps(tp_headroom_report_obj, indent=2, ensure_ascii=False),
                 file=stdout,
                 end="",
             )

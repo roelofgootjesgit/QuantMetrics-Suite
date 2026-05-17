@@ -1,0 +1,29 @@
+# EXP-TREND-EXIT-ADAPT-2026 — XAUUSD trend-only, 1R TP / 1R SL (exit-aanpassing)
+#
+# Hypothese: lagere trend-TP sluit closer aan op median MFE (~0.73R) t.o.v. 2R TP.
+# Entry: ongewijzigd (V4 / BASE SQE + H1 gate). Alleen trend-regime; expansion uit.
+# Venster: zelfde rolling 1825d als deconstruct; kill uit voor volledige sample.
+#
+# Zie: quantresearch/experiments/EXP-TREND-EXIT-ADAPT-2026/
+
+extends: ../sqe_xauusd_deconstruct_2026/V4_trend_only.yaml
+
+regime_profiles:
+  trend:
+    tp_r: 1.0
+    sl_r: 1.0
+    max_trades_per_session: 3
+    position_size_mult: 1.0
+    allowed_sessions:
+      - London
+      - Overlap
+      - New York
+
+risk:
+  equity_kill_switch_pct: 999.0
+
+artifacts:
+  enabled: true
+  experiment_id: EXP-TREND-EXIT-ADAPT-2026
+  role: single
+  bundle_analytics: true

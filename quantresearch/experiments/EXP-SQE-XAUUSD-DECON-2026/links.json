@@ -1,0 +1,11 @@
+{
+  "experiment_id": "EXP-SQE-XAUUSD-DECON-2026",
+  "quantbuild_config_dir": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026",
+  "quantmetrics_os_artifact_glob": "quantmetrics_os/runs/EXP-SQE-XAUUSD-DECON-2026-*/single",
+  "pipeline": "quantresearch/pipelines/sqe_xauusd_decon_2026.json",
+  "strategy_deconstructie": "STRATEGY_DECONSTRUCTIE.md",
+  "run_verdict": "RUN_VERDICT.md",
+  "agenda_decision": "AGENDA_DECISION.md",
+  "followup_hypotheses": "followup_hypotheses_H2_H4.md",
+  "ftmo_frequency_plan": "../../docs/FTMO_FREQUENCY_PLAN_2026.md"
+}

@@ -1,0 +1,14 @@
+# SQE XAUUSD deconstruct — control (A0_BASELINE stack, 5y).
+# See: quantresearch/experiments/EXP-SQE-XAUUSD-DECON-2026/
+
+extends: ../../_throughput_discovery/EXP-2021-2025-throughput-discovery-v1/A0_BASELINE.yaml
+
+quantlog:
+  consolidated_run_file: true
+  auto_analytics: true
+
+artifacts:
+  enabled: true
+  experiment_id: EXP-SQE-XAUUSD-DECON-2026-BASE
+  role: single
+  bundle_analytics: true

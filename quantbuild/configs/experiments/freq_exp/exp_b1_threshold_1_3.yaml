@@ -1,0 +1,7 @@
+# EXP-B1 — expansion_threshold 1.5 → 1.3
+# FREQ plan: één variabele; zie quantresearch/work_files/CURSOR_PLAN_FREQ_EXPERIMENTS.md
+
+extends: ../../strict_prod_v2.yaml
+
+regime:
+  expansion_threshold: 1.3

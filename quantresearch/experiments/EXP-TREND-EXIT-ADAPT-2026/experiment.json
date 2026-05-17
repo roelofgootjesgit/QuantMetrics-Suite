@@ -1,0 +1,22 @@
+{
+  "experiment_id": "EXP-TREND-EXIT-ADAPT-2026",
+  "title": "Trend exit adapt — XAUUSD trend-only, 1R TP i.p.v. 2R, volledig venster",
+  "status": "completed",
+  "run_id": "qb_run_20260504T175233Z_ff1d03cb",
+  "results_summary": {
+    "n": 138,
+    "sum_pnl_r": -14.0,
+    "wr_pct": 44.9,
+    "pf": 0.82,
+    "promotion_pass": false,
+    "reason": "PF 0.82 < 1.1; net R negatief"
+  },
+  "config": "quantbuild/configs/experiments/exp_trend_exit_adapt_2026/XAUUSD_trend_1r_tp_fullwindow.yaml",
+  "hypothesis": "H: trend PF/WR verbeteren met 1R TP gegeven median MFE ~0.73R (vs 2R TP baseline V4).",
+  "promotion_criteria": {
+    "pf_min": 1.1,
+    "wr_min_pct": 40,
+    "notes": "Over volledig venster; kill switch uit (999)."
+  },
+  "baseline_compare": "EXP-V4-EXIT-FIX-2026 (trend 2R/1R, PF ~0.95)"
+}

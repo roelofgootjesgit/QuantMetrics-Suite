@@ -1,0 +1,21 @@
+{
+  "experiment_id": "EXP-EXPANSION-MULTI-INSTRUMENT-2026",
+  "title": "Stap 2 — Expansion-first stack op USDJPY en GBPUSD",
+  "status": "completed",
+  "runs": {
+    "USDJPY": { "run_id": "qb_run_20260504T174321Z_c5a4d7e2", "verdict": "VALIDATION_REQUIRED_and_REJECT_vs_rubric" },
+    "GBPUSD": { "run_id": "qb_run_20260504T174427Z_0fe7286e", "verdict": "REJECT" }
+  },
+  "extends": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026/EXPANSION_FIRST_DEFAULT.yaml",
+  "configs": {
+    "USDJPY": "quantbuild/configs/experiments/exp_expansion_multi_instrument_2026/USDJPY_expansion_first.yaml",
+    "GBPUSD": "quantbuild/configs/experiments/exp_expansion_multi_instrument_2026/GBPUSD_expansion_first.yaml"
+  },
+  "run_script": "quantresearch/scripts/run_expansion_multi_instrument_2026.ps1",
+  "promotion_per_instrument": {
+    "n_gt_30_wr_gt_45_pf_gt_1_3": "PROMOTE",
+    "n_lt_30": "VALIDATION_REQUIRED",
+    "else": "REJECT"
+  },
+  "note_gbpusd": "instrument_profiles.yaml had expansion: false voor GBPUSD; lagere verwachting — REJECT is valide."
+}

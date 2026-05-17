@@ -1,0 +1,80 @@
+{
+  "experiment_id": "EXP-004",
+  "title": "XAUUSD M5 PDH/PDL sweep + reclaim + displacement + micro-shift (London/NY) — offline research",
+  "verdict": "VALIDATION_REQUIRED",
+  "verdict_detail": "Herrun 2026-05-16 (aligned --year sim, years 2015/2019/2022/2024): H2 PASS (forward mean > baseline); H1 n=148, expectancy +0.03 R, PF 1.06 — statistically weak, year variance high (2019 negative). Pre-herrun outcomes (2023-2025, no --year) INVALID.",
+  "hypothesis_tested": "Sweep + reclaim + displacement + micro structure shift on PDH/PDL during London/NY windows yields positive expectancy at 1.5R fixed target vs SL at sweep extreme + 0.1 ATR buffer.",
+  "suite_paths": {
+    "quantbuild": "quantbuild/",
+    "detector": "quantbuild/scripts/sweep_detector.py",
+    "outcome_sim": "quantbuild/scripts/sweep_outcome_sim.py",
+    "funnel_stats": "quantbuild/scripts/sweep_funnel_stats.py",
+    "h2_forward": "quantbuild/scripts/sweep_forward_return_h2.py",
+    "alignment_audit": "quantbuild/scripts/sweep_alignment_audit.py",
+    "subset_stats": "quantbuild/scripts/sweep_outcome_subset_stats.py",
+    "core_detector": "quantbuild/src/quantbuild/research/sweep_m5_xauusd.py",
+    "herrun_protocol": "quantresearch/experiments/EXP-004/HERRUN_PROTOCOL.md"
+  },
+  "data_note": "M5 XAUUSD Dukascopy. Herrun cache: ~814k rows from 2014-11-15 through 2026-05-16 (fetch --days 4200).",
+  "pre_herrun_invalid": {
+    "reason": "sweep_outcome_sim without --year; iloc relative to year slice",
+    "years_affected": ["2024", "2025"],
+    "outcomes_baseline_aggregate": {
+      "n": 98,
+      "expectancy_r": -0.11,
+      "profit_factor": 0.82,
+      "total_r": -10.83
+    }
+  },
+  "herrun_aligned": {
+    "protocol_date": "2026-05-16",
+    "years": [2015, 2019, 2022, 2024],
+    "excluded_years": [2023, 2025],
+    "data_fetch_days": 4200,
+    "funnel_combined": {
+      "raw_sweeps": 14248,
+      "after_reclaim": 1664,
+      "after_acceptance": 1531,
+      "after_displacement": 1482,
+      "ENTER": 148
+    },
+    "enter_by_year": {
+      "2015": 33,
+      "2019": 36,
+      "2022": 42,
+      "2024": 37
+    },
+    "h2": {
+      "horizon_bars": 10,
+      "decision": "PASS",
+      "enter_mean_forward_price": 0.0457,
+      "baseline_mean_forward_price": 0.0117,
+      "enter_pct_positive": 0.52
+    },
+    "h1_outcomes_aligned": {
+      "n": 148,
+      "win_rate_tp": 0.331,
+      "expectancy_r": 0.03,
+      "profit_factor": 1.06,
+      "total_r": 4.46,
+      "by_year": {
+        "2015": { "n": 33, "win_rate_tp": 0.394, "expectancy_r": 0.26, "total_r": 8.72 },
+        "2019": { "n": 36, "win_rate_tp": 0.222, "expectancy_r": -0.28, "total_r": -9.97 },
+        "2022": { "n": 42, "win_rate_tp": 0.31, "expectancy_r": 0.03, "total_r": 1.25 },
+        "2024": { "n": 37, "win_rate_tp": 0.405, "expectancy_r": 0.12, "total_r": 4.46 }
+      }
+    },
+    "alignment_audit_note": "Indices are year-slice relative; use sweep_outcome_sim.py --year. full.iloc!=year.iloc at same index is expected when cache starts before Jan 1."
+  },
+  "alignment_audit_pre_fix": {
+    "2024": { "enter_n": 37, "misaligned_if_full_parquet": 37 },
+    "2025": { "enter_n": 27, "misaligned_if_full_parquet": 27 }
+  },
+  "stable_observations_for_followup": [
+    "Funnel bottleneck: ~88% OBSERVE_NO_RECLAIM of raw sweeps (reclaim within 3 bars).",
+    "2019 aligned H1 expectancy negative (-0.28 R) despite combined n=148.",
+    "H2 forward edge positive in price units but small; exit 1.5R/48bar may not capture it.",
+    "Do not use outcomes without --year on outcome_sim."
+  ],
+  "next_hypothesis_suggestion": "Exit-variation study on aligned ENTER set; trend-regime conditional; extend reclaim window as separate pre-registered test only."
+}

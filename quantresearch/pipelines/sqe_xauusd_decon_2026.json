@@ -1,0 +1,16 @@
+{
+  "id": "sqe-xauusd-decon-2026",
+  "description": "SQE XAUUSD deconstruction matrix (BASE + V1–V5) — 5y backtest, QuantOS artifacts per variant.",
+  "engine": "sqe_xauusd",
+  "quantbuild_configs_dir": "configs/experiments/sqe_xauusd_deconstruct_2026",
+  "runbook": "quantbuild/scripts/run_sqe_xauusd_decon_matrix.ps1",
+  "env_required": ["QUANTMETRICS_SUITE_ROOT"],
+  "runs": [
+    { "id": "BASE", "config_file": "BASE.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-BASE" },
+    { "id": "V1", "config_file": "V1_h1_gate_off.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-V1" },
+    { "id": "V2", "config_file": "V2_combo_min_3.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-V2" },
+    { "id": "V3", "config_file": "V3_expansion_only.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-V3" },
+    { "id": "V4", "config_file": "V4_trend_only.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-V4" },
+    { "id": "V5", "config_file": "V5_lookback_3.yaml", "artifact_experiment_id": "EXP-SQE-XAUUSD-DECON-2026-V5" }
+  ]
+}

@@ -1,0 +1,18 @@
+# EXP-EXPANSION-MULTI-INSTRUMENT-2026 — GBPUSD
+# Zelfde stack als EXPANSION_FIRST_DEFAULT (trend skip, 2R/1R, kill 999, A0 SQE + regime).
+# Instrument book-profile heeft expansion: false vanwege eerdere stats — deze run test of dat stand houdt.
+#
+extends: ../sqe_xauusd_deconstruct_2026/EXPANSION_FIRST_DEFAULT.yaml
+
+symbol: GBPUSD
+
+broker:
+  instrument: GBP_USD
+  mock_price: 1.265
+
+execution_guards:
+  max_spread_pips: 2.0
+  max_slippage_r: 0.10
+
+artifacts:
+  experiment_id: EXP-EXPANSION-MULTI-2026-GBPUSD

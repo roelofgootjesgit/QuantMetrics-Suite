@@ -1,0 +1,90 @@
+{
+  "generated_at_utc": "2026-05-04T17:08:16Z",
+  "suite_root": "C:\\Users\\Gebruiker\\quantmetrics-suite",
+  "sources": {
+    "BASE": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantmetrics_os\\runs\\EXP-SQE-XAUUSD-DECON-2026-BASE\\single\\quantlog_events.jsonl",
+    "V3": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantmetrics_os\\runs\\EXP-SQE-XAUUSD-DECON-2026-V3\\single\\quantlog_events.jsonl",
+    "V4": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantmetrics_os\\runs\\EXP-SQE-XAUUSD-DECON-2026-V4\\single\\quantlog_events.jsonl"
+  },
+  "counts": {
+    "BASE_trade_closed": 42,
+    "V3_trade_closed": 38,
+    "V4_trade_closed": 34
+  },
+  "BASE_by_year": {
+    "2021": {
+      "n": 23,
+      "net_r": 16.0,
+      "win_rate": 0.5652,
+      "profit_factor": 2.6
+    },
+    "2022": {
+      "n": 19,
+      "net_r": -10.0,
+      "win_rate": 0.1579,
+      "profit_factor": 0.375
+    }
+  },
+  "BASE_by_session": {
+    "London": {
+      "n": 5,
+      "net_r": 1.0,
+      "win_rate": 0.4,
+      "profit_factor": 1.3333
+    },
+    "New York": {
+      "n": 13,
+      "net_r": 2.0,
+      "win_rate": 0.3846,
+      "profit_factor": 1.25
+    },
+    "Overlap": {
+      "n": 24,
+      "net_r": 3.0,
+      "win_rate": 0.375,
+      "profit_factor": 1.2
+    }
+  },
+  "V3_by_year": {
+    "2021": {
+      "n": 9,
+      "net_r": 3.0,
+      "win_rate": 0.4444,
+      "profit_factor": 1.6
+    },
+    "2022": {
+      "n": 4,
+      "net_r": 5.0,
+      "win_rate": 0.75,
+      "profit_factor": 6.0
+    },
+    "2023": {
+      "n": 8,
+      "net_r": 4.0,
+      "win_rate": 0.5,
+      "profit_factor": 2.0
+    },
+    "2024": {
+      "n": 4,
+      "net_r": 5.0,
+      "win_rate": 0.75,
+      "profit_factor": 6.0
+    },
+    "2025": {
+      "n": 5,
+      "net_r": 10.0,
+      "win_rate": 1.0,
+      "profit_factor": "inf"
+    },
+    "2026": {
+      "n": 8,
+      "net_r": 4.0,
+      "win_rate": 0.5,
+      "profit_factor": 2.0
+    }
+  },
+  "V4_exit_tags": {
+    "SL": 22,
+    "TP": 12
+  }
+}

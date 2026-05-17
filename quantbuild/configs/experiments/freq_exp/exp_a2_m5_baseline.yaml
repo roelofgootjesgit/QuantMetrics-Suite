@@ -1,0 +1,12 @@
+# EXP-A2 — M5 primaire bars; zelfde expansion-first kernel als expansion_first_default.
+# timeframes[0] = execution/regime bars; 1h aanwezig voor structure_use_h1_gate (engine).
+#
+# Rolling:
+#   python scripts/rolling_year_runner.py --config configs/experiments/freq_exp/exp_a2_m5_baseline.yaml \
+#     --compare configs/expansion_first_default.yaml --years 2022 2023 2024 2025
+
+extends: ../../expansion_first_default.yaml
+
+timeframes:
+  - 5m
+  - 1h

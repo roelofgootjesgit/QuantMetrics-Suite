@@ -1,0 +1,9 @@
+# V2 — entry_sweep_disp_fvg_min_count: 3 (stricter precision)
+
+extends: BASE.yaml
+
+strategy:
+  entry_sweep_disp_fvg_min_count: 3
+
+artifacts:
+  experiment_id: EXP-SQE-XAUUSD-DECON-2026-V2

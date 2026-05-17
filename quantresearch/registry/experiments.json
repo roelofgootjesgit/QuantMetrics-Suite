@@ -62,6 +62,61 @@
       "hyp002_pipeline_manifest": "hyp002-v5a-expansion-block-closed-2026",
       "research_log_closed_dossier": "research_logs/HYP-002_EXP-002_closed_dossier.md",
       "experiment_ledger_folder": "experiments/EXP-002"
+    },
+    {
+      "experiment_id": "EXP-004",
+      "title": "XAUUSD M5 PDH/PDL sweep + reclaim + displacement + micro-shift (offline research)",
+      "status": "completed",
+      "date_created": "2026-05-12",
+      "hypothesis": "London/NY PDH/PDL sweeps with reclaim, displacement, and micro-shift yield positive 1.5R expectancy vs sweep-based SL (frozen simulator Optie A).",
+      "baseline_run_id": "sweep_m5_detector_plus_outcome_sim_2023_2025",
+      "variant_run_id": "na",
+      "baseline_config": "quantbuild/src/quantbuild/research/sweep_m5_xauusd.py",
+      "variant_config": "quantbuild/scripts/sweep_outcome_sim.py",
+      "data_window": {
+        "start": "2023-01-29",
+        "end": "2026-05-12"
+      },
+      "strategy_version": "xauusd_sweep_reversal_v1_offline",
+      "result": "negative",
+      "decision": "REJECT",
+      "tags": [
+        "XAUUSD",
+        "M5",
+        "PDH",
+        "PDL",
+        "sweep_research",
+        "EXP-004",
+        "offline_simulator"
+      ],
+      "experiment_ledger_folder": "experiments/EXP-004"
+    },
+    {
+      "experiment_id": "EXP-004",
+      "title": "XAUUSD M5 PDH/PDL sweep reversal — offline research (EXP-004)",
+      "status": "completed",
+      "date_created": "2026-05-12",
+      "hypothesis": "PDH/PDL sweep funnel + 1.5R exit on aligned M5; herrun 2015/2019/2022/2024.",
+      "baseline_run_id": "herrun_aligned_148_enter",
+      "variant_run_id": "na",
+      "baseline_config": "quantbuild/scripts/sweep_detector.py + sweep_outcome_sim.py --year",
+      "variant_config": "na",
+      "data_window": {
+        "start": "2015-01-01",
+        "end": "2024-12-31"
+      },
+      "strategy_version": "xauusd_sweep_reversal_v1",
+      "result": "inconclusive",
+      "decision": "VALIDATION_REQUIRED",
+      "tags": [
+        "XAUUSD",
+        "M5",
+        "sweep_research",
+        "EXP-004",
+        "herrun_aligned",
+        "H2_pass"
+      ],
+      "experiment_ledger_folder": "experiments/EXP-004"
     }
   ]
 }

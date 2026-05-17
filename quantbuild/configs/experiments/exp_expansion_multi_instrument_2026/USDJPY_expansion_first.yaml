@@ -1,0 +1,18 @@
+# EXP-EXPANSION-MULTI-INSTRUMENT-2026 — USDJPY
+# Zelfde stack als EXPANSION_FIRST_DEFAULT (trend skip, 2R/1R, kill 999, A0 SQE + regime).
+# Instrument: zie instrument_profiles.yaml (STABILIZER, expansion aan in book-profile).
+#
+extends: ../sqe_xauusd_deconstruct_2026/EXPANSION_FIRST_DEFAULT.yaml
+
+symbol: USDJPY
+
+broker:
+  instrument: USD_JPY
+  mock_price: 150.0
+
+execution_guards:
+  max_spread_pips: 1.5
+  max_slippage_r: 0.10
+
+artifacts:
+  experiment_id: EXP-EXPANSION-MULTI-2026-USDJPY

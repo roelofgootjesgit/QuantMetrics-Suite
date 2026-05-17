@@ -1,0 +1,14 @@
+{
+  "experiment_id": "EXP-SQE-XAUUSD-EXPANSION-FIRST-DEFAULT",
+  "title": "Stap 1 — Schone expansion-baseline (XAUUSD, volledig venster, kill uit)",
+  "config": "quantbuild/configs/experiments/sqe_xauusd_deconstruct_2026/EXPANSION_FIRST_DEFAULT.yaml",
+  "status": "completed",
+  "run_id": "qb_run_20260504T173508Z_9d38e79c",
+  "artifacts": "quantmetrics_os/runs/EXP-SQE-XAUUSD-EXPANSION-FIRST-DEFAULT/single/",
+  "promotion_criteria": {
+    "n_min": 30,
+    "wr_min_pct": 50,
+    "pf_min": 1.5
+  },
+  "equivalence_note": "Output matches EXP-SQE-XAUUSD-DECON-2026-V3 (same trend.skip + stack): 38 trades, +31R, WR 60.5%, PF 3.07."
+}

@@ -1,0 +1,12 @@
+{
+  "run_id": "qb_run_20260503T153048Z_d0441fb0",
+  "experiment_id": "EXP-NY-SWEEP-A0-5Y-2026",
+  "bundled_at_utc": "2026-05-03T15:30:54.578353Z",
+  "quantbuild_root": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild",
+  "quantresearch_root": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantresearch",
+  "bundle_dest": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantresearch\\runs\\EXP-NY-SWEEP-A0-5Y-2026",
+  "quantlog_consolidated": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild\\data\\quantlog_events\\runs\\qb_run_20260503T153048Z_d0441fb0.jsonl",
+  "analytics_files_copied": 2,
+  "_quantbuild_config_path": "C:\\Users\\Gebruiker\\quantmetrics-suite\\quantbuild\\configs\\experiments\\ny_sweep_reversion\\A0_5y_high_sample.yaml",
+  "ny_sweep_reversion_config": "configs/experiments/ny_sweep_reversion/A0_high_sample.yaml"
+}

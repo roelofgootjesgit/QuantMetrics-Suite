@@ -28,7 +28,15 @@
 #
 # Validated by cross_instrument_runner.py + portfolio_optimization_v2.py
 # on 5yr data (2021-2026)
-# ============================================================
+#
+# --- VERIFICATION STATUS (2026-05) ------------------------------------------
+# Inline numeric claims (comments on regimes, _5yr_*, trade counts, PF/WR) are
+# KNOWLEDGE BASE NOTES. They are UNVERIFIED against the current canonical
+# QuantBuild backtest engine unless an explicit _verified_engine_run_id is set.
+# Reproducibility: EXP-EXPANSION-MULTI (FX expansion), EXP-NAS100-TREND-VERIFY
+# showed profile totals are NOT reproduced by run_backtest + SQE stack — treat
+# unverified numbers as provisional. See quantresearch/README.md (architecture verdict).
+# ============================================================================
 
 instruments:
 
@@ -71,9 +79,10 @@ instruments:
     dukascopy_symbol: "GBPUSD"
     oanda_instrument: "GBP_USD"
     regimes:
-      trend: true       # 46 trades, PF 4.23, exp +1.123R
-      expansion: false   # 15 trades, 0% WR — kills edge
+      trend: true       # 46 trades, PF 4.23, exp +1.123R  [UNVERIFIED — engine]
+      expansion: false   # 15 trades, 0% WR — legacy note; EXP-EXPANSION-MULTI GBPUSD: 0% WR / REJECT
       compression: false
+    _expansion_profile_metrics_status: UNVERIFIED_PENDING_ENGINE
     max_spread_pips: 2.0
     max_slippage_r: 0.10
     pip_value: 0.0001
@@ -97,9 +106,10 @@ instruments:
     dukascopy_symbol: "USDJPY"
     oanda_instrument: "USD_JPY"
     regimes:
-      trend: true       # 113 trades, PF 1.67, exp +0.331R
-      expansion: true   # 29 trades, PF 1.62, exp +0.345R
+      trend: true       # 113 trades, PF 1.67, exp +0.331R  [UNVERIFIED — engine]
+      expansion: true   # 29 trades, PF 1.62, exp +0.345R  [UNVERIFIED — EXP-EXPANSION-MULTI REJECT]
       compression: false
+    _expansion_profile_metrics_status: UNVERIFIED_PENDING_ENGINE
     max_spread_pips: 1.5
     max_slippage_r: 0.10
     pip_value: 0.01
@@ -125,9 +135,11 @@ instruments:
     dukascopy_symbol: "NAS100"
     oanda_instrument: "NAS100_USD"
     regimes:
-      trend: true       # 956 trades, exp +0.106R, total +101R
-      expansion: false   # 57 trades, exp -0.211R — kills edge
+      trend: true       # 956 trades, exp +0.106R, total +101R  [UNVERIFIED — EXP-NAS100-TREND-VERIFY REJECT]
+      expansion: false   # 57 trades, exp -0.211R — legacy note [UNVERIFIED — engine]
       compression: false
+    _trend_profile_metrics_status: UNVERIFIED_PENDING_ENGINE
+    _engine_verification_note: "2026-05 EXP-NAS100-TREND-VERIFY-2026 did not reproduce _5yr_* with run_backtest+SQE; legacy script/methodology differs."
     max_spread_pips: 3.0
     max_slippage_r: 0.20
     pip_value: 0.1
@@ -137,7 +149,7 @@ instruments:
     max_concurrent: 1
     max_trades_per_day: 2
     max_instrument_heat_pct: 1.5
-    _5yr_trend_only_exp: 0.106
+    _5yr_trend_only_exp: 0.106   # UNVERIFIED — see _trend_profile_metrics_status
     _5yr_trend_only_total: 101.3
     _5yr_trend_trades: 956
     _downgrade_reason: "Core(5) achieves 65.4% pass rate. NAS100 adds throughput but increases DD failures, netting LOWER pass rate (56.8%). Use only under specific challenge pressure."
