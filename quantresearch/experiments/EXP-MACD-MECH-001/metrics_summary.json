@@ -1,0 +1,92 @@
+{
+  "experiment_id": "EXP-MACD-MECH-001",
+  "data_first_bar": "2023-02-02 16:45:00",
+  "data_last_bar": "2024-12-31 21:45:00",
+  "n_bars": 47614,
+  "raw_macd_crosses": 3599,
+  "independent_signals": 1958,
+  "clustering_rate": 0.456,
+  "forward_returns_r": {
+    "T+4": {
+      "n": 1958,
+      "mean": -0.03142351974676391,
+      "median": 0.0,
+      "std": 0.8950642316590731
+    },
+    "T+8": {
+      "n": 1958,
+      "mean": -0.034821172500060914,
+      "median": -0.011538759337240244,
+      "std": 1.2243600769523386
+    },
+    "T+16": {
+      "n": 1957,
+      "mean": -0.011706423808172212,
+      "median": -0.025925925925903186,
+      "std": 1.7786362028328937
+    }
+  },
+  "win_rate_at_T8": 48.77,
+  "time_to_adverse_excursion": {
+    "threshold_r": 0.5,
+    "n_measured": 1344,
+    "mean_bars": 4.495535714285714,
+    "median_bars": 3.0,
+    "pct_within_2_bars": 41.592261904761905,
+    "pct_within_6_bars": 76.26488095238095
+  },
+  "macd_cross_velocity_histogram": {
+    "bin_edges": [
+      -0.00048497597348592366,
+      -0.0003910761852170474,
+      -0.0002971763969481712,
+      -0.0002032766086792949,
+      -0.00010937682041041864,
+      -1.5477032141542372e-05,
+      7.842275612733384e-05,
+      0.00017232254439621017,
+      0.0002662223326650864,
+      0.0003601221209339626,
+      0.000454021909202839
+    ],
+    "counts": [
+      4,
+      3,
+      7,
+      56,
+      725,
+      1009,
+      128,
+      14,
+      10,
+      2
+    ],
+    "mean": 1.3814224892815486e-06,
+    "median": 4.955415296123007e-06
+  },
+  "velocity_vs_win_t8_correlation": 0.0284670874785649,
+  "bb_macd_correlation": {
+    "co_occurrence_same_bar": 511,
+    "bb_only_bars": 5590,
+    "macd_only_bars": 3088,
+    "neither_bars": 38425,
+    "pearson_same_bar": 0.011848423146108423,
+    "joint_rate": 0.010732137606586298
+  },
+  "permutation_test": {
+    "observed_hit_rate": -0.027180044153212606,
+    "baseline_mean_hit_rate": -0.006099135398108937,
+    "p_value": 0.7895,
+    "significant": false,
+    "n_signals": 1958,
+    "n_permutations": 2000,
+    "seed": 42
+  },
+  "backtest_trade_stats": {
+    "n_trades": 1524,
+    "expectancy_r": -0.03506749506140483,
+    "win_rate_pct": 44.422572178477694,
+    "profit_factor": 0.91145532407952
+  },
+  "quantlog_path": "data\\quantlog_events\\runs\\qb_run_20260517T150609Z_5ea614ca.jsonl"
+}

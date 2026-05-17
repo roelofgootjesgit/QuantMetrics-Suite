@@ -1,0 +1,9 @@
+{
+  "observed_hit_rate": -0.027180044153212606,
+  "baseline_mean_hit_rate": -0.006099135398108937,
+  "p_value": 0.7895,
+  "significant": false,
+  "n_signals": 1958,
+  "n_permutations": 2000,
+  "seed": 42
+}

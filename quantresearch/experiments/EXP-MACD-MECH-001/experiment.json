@@ -1,0 +1,8 @@
+{
+  "experiment_id": "EXP-MACD-MECH-001",
+  "hypothesis": "MACD cross on EURUSD M15 has standalone directional information vs random entry timestamps",
+  "status": "ready_to_run",
+  "config_path": "quantbuild/configs/exp_macd_mech_001.yaml",
+  "phase": 2,
+  "depends_on": "EXP-BB-MECH-001/decision.md"
+}

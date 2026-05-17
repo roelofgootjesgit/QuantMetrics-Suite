@@ -97,7 +97,7 @@ Niet elke conditie als generiek `signal_detected` loggen zonder onderscheid.
 | 1.1 | Strategie: `quantbuild/src/quantbuild/strategies/bb_only.py` + `bb_only_engine.py` | ☑ |
 | 1.2 | Config: `quantbuild/configs/exp_bb_mech_001.yaml` | ☑ |
 | 1.3 | Registry: `quantresearch/experiments/EXP-BB-MECH-001/` dossier skeleton | ☑ |
-| 1.4 | Run backtest EURUSD M15 2022-01-01 → 2024-12-31 | ☐ |
+| 1.4 | Run backtest EURUSD M15 2022-01-01 → 2024-12-31 | ☑ (`qb_run_20260517T145022Z`; data vanaf 2023-02-02) |
 | 1.5 | Analytics: observations, independent candidates, entries, hit_midline, MFE/MAE, extension buckets, permutation test, regime/session attribution (geen filter) | ☐ |
 | 1.6 | `decision.md` — verdict INSUFFICIENT / REJECT / VALIDATION_REQUIRED / PROMOTE_CANDIDATE | ☐ |
 
@@ -223,11 +223,11 @@ Next allowed action:
 [ ] 1.3 Analyze BB isolation
 [ ] 1.4 Write decision.md
 
-[ ] 2.0 macd_only strategy          ← ALTIJD, ook na BB fail
-[ ] 2.1 EXP-MACD-MECH-001 config
-[ ] 2.2 Run MACD isolation
-[ ] 2.3 Analyze MACD isolation
-[ ] 2.4 Write decision.md
+[x] 2.0 macd_only strategy          ← ALTIJD, ook na BB fail
+[x] 2.1 EXP-MACD-MECH-001 config
+[x] 2.2 Run MACD isolation
+[x] 2.3 Analyze MACD isolation
+[x] 2.4 Write decision.md
 
 [ ] 3.0 bb_macd_joint strategy
 [ ] 3.1 EXP-JOINT-001 config
@@ -266,6 +266,7 @@ Next allowed action:
 | 2026-05-17 | 0.4 | QuantLog `component_observed` / `candidate_signal` + contract tests |
 | 2026-05-17 | 0.5 | Permutation test utility in quantresearch |
 | 2026-05-17 | 1.0 | bb_only strategy + engine + config + 6 tests |
+| 2026-05-17 | 1.4 | Echte data-run: 1617 trades, expectancy -0.09R, PF 0.81 (zie run summary) |
 
 ---
 
