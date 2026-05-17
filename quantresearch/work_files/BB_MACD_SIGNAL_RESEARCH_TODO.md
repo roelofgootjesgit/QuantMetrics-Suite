@@ -93,10 +93,10 @@ Niet elke conditie als generiek `signal_detected` loggen zonder onderscheid.
 
 | # | Taak | Status |
 |---|------|--------|
-| 1.0 | Tests strategie: `quantbuild/tests/test_bb_only_strategy.py` | ☐ |
-| 1.1 | Strategie: `quantbuild/src/quantbuild/strategies/bb_only.py` | ☐ |
-| 1.2 | Config: `quantbuild/configs/exp_bb_mech_001.yaml` | ☐ |
-| 1.3 | Registry: `quantresearch/experiments/EXP-BB-MECH-001/` dossier skeleton | ☐ |
+| 1.0 | Tests strategie: `quantbuild/tests/test_bb_only_strategy.py` | ☑ |
+| 1.1 | Strategie: `quantbuild/src/quantbuild/strategies/bb_only.py` + `bb_only_engine.py` | ☑ |
+| 1.2 | Config: `quantbuild/configs/exp_bb_mech_001.yaml` | ☑ |
+| 1.3 | Registry: `quantresearch/experiments/EXP-BB-MECH-001/` dossier skeleton | ☑ |
 | 1.4 | Run backtest EURUSD M15 2022-01-01 → 2024-12-31 | ☐ |
 | 1.5 | Analytics: observations, independent candidates, entries, hit_midline, MFE/MAE, extension buckets, permutation test, regime/session attribution (geen filter) | ☐ |
 | 1.6 | `decision.md` — verdict INSUFFICIENT / REJECT / VALIDATION_REQUIRED / PROMOTE_CANDIDATE | ☐ |
@@ -217,8 +217,8 @@ Next allowed action:
 [x] 0.4 QuantLog payload extension + contract tests
 [x] 0.5 QuantResearch permutation utility + tests
 
-[ ] 1.0 bb_only strategy
-[ ] 1.1 EXP-BB-MECH-001 config
+[x] 1.0 bb_only strategy
+[x] 1.1 EXP-BB-MECH-001 config
 [ ] 1.2 Run BB isolation
 [ ] 1.3 Analyze BB isolation
 [ ] 1.4 Write decision.md
@@ -265,6 +265,7 @@ Next allowed action:
 | 2026-05-17 | 0.3 | Signal independence filter + 5 tests groen |
 | 2026-05-17 | 0.4 | QuantLog `component_observed` / `candidate_signal` + contract tests |
 | 2026-05-17 | 0.5 | Permutation test utility in quantresearch |
+| 2026-05-17 | 1.0 | bb_only strategy + engine + config + 6 tests |
 
 ---
 

@@ -1,0 +1,7 @@
+{
+  "experiment_id": "EXP-BB-MECH-001",
+  "hypothesis": "BB extension below lower / above upper band has predictive edge vs random entry timestamps",
+  "status": "ready_to_run",
+  "config_path": "quantbuild/configs/exp_bb_mech_001.yaml",
+  "phase": 1
+}

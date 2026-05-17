@@ -1,0 +1,52 @@
+# EXP-BB-MECH-001 — Bollinger Band extension standalone (EURUSD M15)
+experiment_id: EXP-BB-MECH-001
+
+symbol: EURUSD
+timeframes:
+  - 15m
+
+data:
+  base_path: data/market_cache
+
+backtest:
+  engine: bb_only
+  start_date: "2022-01-01"
+  end_date: "2024-12-31"
+  session_mode: extended
+
+strategy:
+  module: bb_only
+  bollinger:
+    length: 20
+    stddev: 2.0
+  signal_independence:
+    min_bars_gap: 4
+    min_atr_distance: 1.5
+
+exit:
+  mode: midline
+  time_exit_bars: 32
+
+risk:
+  sl_mode: atr
+  sl_atr_mult: 2.0
+  risk_per_trade_pct: 0.25
+  max_concurrent: 1
+  max_daily_loss_r: 2.0
+
+guards:
+  spread:
+    enabled: true
+    max_spread_pips: 1.5
+
+broker:
+  account_id: backtest
+  mock_spread: 0.00010
+
+quantlog:
+  enabled: true
+  environment: backtest
+  consolidated_run_file: true
+
+artifacts:
+  enabled: true

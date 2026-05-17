@@ -519,6 +519,17 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
             regime_series=regime_series,
         )
 
+    if str((cfg.get("backtest") or {}).get("engine", "")).lower() == "bb_only":
+        from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
+
+        return run_bb_only_backtest(
+            cfg,
+            data,
+            symbol=symbol,
+            session_mode=session_mode,
+            regime_series=regime_series,
+        )
+
     # NewsGate setup (loads historical news if available)
     news_gate, _news_history = _setup_news_gate(cfg)
 
