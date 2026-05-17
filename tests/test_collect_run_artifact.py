@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def test_collect_keeps_non_current_run_mfe_reports(tmp_path: Path) -> None:
     old_time = now - 10
     old_report.touch()
     current_report.touch()
-    old_report.touch(times=(old_time, old_time))
+    os.utime(old_report, (old_time, old_time))
 
     dest = collect(
         experiment_id="EXP",
