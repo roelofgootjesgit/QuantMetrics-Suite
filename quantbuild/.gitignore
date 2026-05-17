@@ -26,6 +26,10 @@ reports/
 # Generated analytics / curve CSVs from local scripts (reproducible from configs)
 output_rapport/
 
+# Offline sweep research JSONL (reproduce via scripts/sweep_detector.py)
+/sweep_outcomes_*.jsonl
+/sweeps_*.jsonl
+
 # Strategy-test outputs (configs blijven in git)
 strategy_tests/logs/*.log
 strategy_tests/runs/*

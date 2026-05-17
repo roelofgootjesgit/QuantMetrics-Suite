@@ -5,3 +5,7 @@ __pycache__/
 # Regenerate with: python scripts/research_digest.py
 research/runs_digest.md
 research/runs_registry.json
+
+# Local backtest/analytics outputs (reproduce via quantmetrics.py / orchestrator)
+runs/*
+!runs/.gitkeep
