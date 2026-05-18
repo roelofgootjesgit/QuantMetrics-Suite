@@ -147,3 +147,55 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_max_concurrent_caps_overlapping_trades(self, monkeypatch):
+        from src.quantbuild.strategies import bb_only_engine as engine
+
+        df = _eurusd_df(12)
+        signals = [
+            {
+                "bar_index": i,
+                "direction": "LONG",
+                "component_type": "BB_LOWER_BREAK",
+                "session_at_signal": "LONDON",
+                "regime_at_signal": "COMPRESSION",
+                "bb_lower_break": True,
+                "bb_upper_break": False,
+                "bb_extension_normalized_atr": 1.0,
+            }
+            for i in (1, 2, 3)
+        ]
+
+        def fake_simulate(data, entry_i, direction, **kwargs):
+            exit_i = entry_i + 3
+            return {
+                "entry_price": float(data["close"].iloc[entry_i]),
+                "exit_price": float(data["close"].iloc[exit_i]),
+                "sl": float(data["close"].iloc[entry_i]) - 0.01,
+                "tp": float(data["close"].iloc[entry_i]) + 0.01,
+                "exit_ts": data.index[exit_i],
+                "exit_bar_idx": exit_i,
+                "profit_usd": 1.0,
+                "profit_r": 1.0,
+                "result": "WIN",
+                "exit_reason": "midline",
+                "bars_held": 3,
+                "bars_to_midline": 3,
+                "hit_midline_before_sl": True,
+                "mae_r": 0.0,
+                "mfe_r": 1.0,
+            }
+
+        monkeypatch.setattr(engine, "collect_bb_entry_signals", lambda *args, **kwargs: signals)
+        monkeypatch.setattr(engine, "simulate_bb_midline_trade", fake_simulate)
+
+        trades = engine.run_bb_only_backtest(
+            {
+                "risk": {"max_concurrent": 2, "max_daily_loss_r": 99.0},
+                "quantlog": {"enabled": False},
+            },
+            df,
+            symbol="EURUSD",
+        )
+
+        assert [trade.timestamp_open for trade in trades] == [df.index[1], df.index[2]]

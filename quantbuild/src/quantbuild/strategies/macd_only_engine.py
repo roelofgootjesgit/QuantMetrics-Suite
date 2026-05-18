@@ -24,7 +24,7 @@ from src.quantbuild.research.signal_research_quantlog import (
     build_trade_closed_research_payload,
 )
 from src.quantbuild.strategies.bb_only import regime_at_signal_label, session_at_signal_label
-from src.quantbuild.strategies.bb_only_engine import _pip_size, _spread_ok
+from src.quantbuild.strategies.bb_only_engine import _active_exit_bars, _pip_size, _spread_ok
 from src.quantbuild.strategies.macd_only import (
     STRATEGY_ID,
     collect_macd_entry_signals,
@@ -118,11 +118,12 @@ def run_macd_only_backtest(
     trades: List[Trade] = []
     trade_order_refs: List[str] = []
     daily_pnl_r: Dict[Any, float] = {}
-    open_until_bar = -1
+    open_exit_bars: List[int] = []
 
     for sig in entry_signals:
         i = int(sig["bar_index"])
-        if i <= open_until_bar and max_concurrent <= 1:
+        open_exit_bars = _active_exit_bars(open_exit_bars, i)
+        if len(open_exit_bars) >= max_concurrent:
             continue
 
         entry_ts = data.index[i]
@@ -224,7 +225,7 @@ def run_macd_only_backtest(
             _cache=sim_cache,
         )
 
-        open_until_bar = int(result["exit_bar_idx"])
+        open_exit_bars.append(int(result["exit_bar_idx"]))
 
         if ql_emitter:
             extra: Dict[str, Any] = {}

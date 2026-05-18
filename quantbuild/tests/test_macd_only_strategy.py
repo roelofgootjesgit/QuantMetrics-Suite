@@ -78,3 +78,55 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_max_concurrent_caps_overlapping_trades(self, monkeypatch):
+        from src.quantbuild.strategies import macd_only_engine as engine
+
+        df = _ohlc(12)
+        signals = [
+            {
+                "bar_index": i,
+                "direction": "LONG",
+                "component_type": "MACD_BULL_CROSS",
+                "session_at_signal": "LONDON",
+                "regime_at_signal": "COMPRESSION",
+                "macd_cross_bull": True,
+                "macd_cross_bear": False,
+                "macd_cross_velocity": 0.1,
+            }
+            for i in (1, 2, 3)
+        ]
+
+        def fake_simulate(data, entry_i, direction, **kwargs):
+            exit_i = entry_i + 3
+            return {
+                "entry_price": float(data["close"].iloc[entry_i]),
+                "exit_price": float(data["close"].iloc[exit_i]),
+                "sl": float(data["close"].iloc[entry_i]) - 0.01,
+                "tp": float(data["close"].iloc[entry_i]) + 0.01,
+                "exit_ts": data.index[exit_i],
+                "exit_bar_idx": exit_i,
+                "profit_usd": 1.0,
+                "profit_r": 1.0,
+                "result": "WIN",
+                "exit_reason": "time_exit",
+                "bars_held": 3,
+                "bars_to_midline": None,
+                "hit_midline_before_sl": False,
+                "mae_r": 0.0,
+                "mfe_r": 1.0,
+            }
+
+        monkeypatch.setattr(engine, "collect_macd_entry_signals", lambda *args, **kwargs: signals)
+        monkeypatch.setattr(engine, "simulate_macd_time_exit_trade", fake_simulate)
+
+        trades = engine.run_macd_only_backtest(
+            {
+                "risk": {"max_concurrent": 2, "max_daily_loss_r": 99.0},
+                "quantlog": {"enabled": False},
+            },
+            df,
+            symbol="EURUSD",
+        )
+
+        assert [trade.timestamp_open for trade in trades] == [df.index[1], df.index[2]]
