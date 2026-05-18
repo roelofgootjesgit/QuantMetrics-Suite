@@ -57,6 +57,11 @@ def _spread_ok(cfg: Dict[str, Any], symbol: str) -> bool:
     return spread_pips <= max_pips
 
 
+def _active_exit_bars(open_exit_bars: List[int], entry_bar: int) -> List[int]:
+    """Keep positions whose exit bar still overlaps the candidate entry bar."""
+    return [exit_bar for exit_bar in open_exit_bars if exit_bar >= entry_bar]
+
+
 def run_bb_only_backtest(
     cfg: Dict[str, Any],
     data: pd.DataFrame,
@@ -137,11 +142,12 @@ def run_bb_only_backtest(
     trades: List[Trade] = []
     trade_order_refs: List[str] = []
     daily_pnl_r: Dict[Any, float] = {}
-    open_until_bar = -1
+    open_exit_bars: List[int] = []
 
     for sig in entry_signals:
         i = int(sig["bar_index"])
-        if i <= open_until_bar and max_concurrent <= 1:
+        open_exit_bars = _active_exit_bars(open_exit_bars, i)
+        if len(open_exit_bars) >= max_concurrent:
             continue
 
         entry_ts = data.index[i]
@@ -244,7 +250,7 @@ def run_bb_only_backtest(
             _cache=sim_cache,
         )
 
-        open_until_bar = int(result["exit_bar_idx"])
+        open_exit_bars.append(int(result["exit_bar_idx"]))
 
         if ql_emitter:
             ql_emitter.emit(
