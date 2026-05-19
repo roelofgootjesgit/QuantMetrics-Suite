@@ -36,12 +36,49 @@ from src.quantbuild.strategies.macd_only import (
 from quantresearch.statistics.permutation_test import permutation_test
 
 
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
+DEFAULT_EXPERIMENT_ID = "EXP-MACD-MECH-001"
+
+
+def _event_matches_experiment(ev: dict[str, Any], experiment_id: str) -> bool:
+    return ev.get("strategy_id") == experiment_id or ev.get("experiment_id") == experiment_id
+
+
+def _jsonl_has_experiment(path: Path, experiment_id: str) -> bool:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if _event_matches_experiment(ev, experiment_id):
+            return True
+    return False
+
+
+def _find_latest_run_jsonl(ql_base: Path, experiment_id: str | None = None) -> Path | None:
     runs = ql_base / "runs"
     if not runs.is_dir():
         return None
     files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+    if experiment_id is None:
+        return files[0] if files else None
+    for path in files:
+        if _jsonl_has_experiment(path, experiment_id):
+            return path
+    return None
+
+
+def _neutral_permutation_result(n_permutations: int, seed: int) -> dict[str, float | int | bool]:
+    return {
+        "observed_hit_rate": 0.0,
+        "baseline_mean_hit_rate": 0.0,
+        "p_value": 1.0,
+        "significant": False,
+        "n_signals": 0,
+        "n_permutations": n_permutations,
+        "seed": seed,
+    }
 
 
 def _forward_return_r(
@@ -62,6 +99,33 @@ def _forward_return_r(
     risk = 2.0 * atr_v
     move = exit_p - entry if direction == "LONG" else entry - exit_p
     return move / risk
+
+
+def _directional_permutation_inputs(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+) -> tuple[np.ndarray, np.ndarray]:
+    outcomes: list[float] = []
+    positions: dict[tuple[int, str], int] = {}
+
+    for bar_i in range(len(data)):
+        for direction in ("LONG", "SHORT"):
+            r = _forward_return_r(data, atr_series, bar_i, direction, horizon)
+            if r is None or not np.isfinite(r):
+                continue
+            positions[(bar_i, direction)] = len(outcomes)
+            outcomes.append(float(r))
+
+    signal_positions: list[int] = []
+    for sig in entries:
+        pos = positions.get((int(sig["bar_index"]), str(sig["direction"]).upper()))
+        if pos is not None:
+            signal_positions.append(pos)
+
+    return np.asarray(outcomes, dtype=float), np.asarray(signal_positions, dtype=int)
 
 
 def _time_to_adverse_excursion(
@@ -139,6 +203,7 @@ def analyze(
     output_dir: Path,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
+    experiment_id = str(cfg.get("experiment_id") or DEFAULT_EXPERIMENT_ID)
     symbol = cfg.get("symbol", "EURUSD")
     base_path = quantbuild_repo_root() / Path(cfg.get("data", {}).get("base_path", "data/market_cache"))
     bt = cfg.get("backtest") or {}
@@ -170,7 +235,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +243,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +257,13 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    universe_returns, perm_signal_indices = _directional_permutation_inputs(
+        data, atr_series, entries, horizon=8
+    )
+    if len(universe_returns):
+        perm = permutation_test(universe_returns, perm_signal_indices, n_permutations=2000, seed=42)
+    else:
+        perm = _neutral_permutation_result(n_permutations=2000, seed=42)
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
@@ -230,7 +289,7 @@ def analyze(
             if not line.strip():
                 continue
             ev = json.loads(line)
-            if ev.get("event_type") == "trade_closed":
+            if ev.get("event_type") == "trade_closed" and _event_matches_experiment(ev, experiment_id):
                 closed.append(ev.get("payload") or {})
         if closed:
             pnl_r = [float(c.get("pnl_r", 0)) for c in closed]
@@ -245,7 +304,7 @@ def analyze(
             }
 
     summary: dict[str, Any] = {
-        "experiment_id": "EXP-MACD-MECH-001",
+        "experiment_id": experiment_id,
         "data_first_bar": str(data.index.min()) if len(data) else None,
         "data_last_bar": str(data.index.max()) if len(data) else None,
         "n_bars": len(data),
@@ -309,9 +368,10 @@ def main() -> int:
     ql_path = args.quantlog
     if ql_path is None:
         cfg = load_config(args.config)
+        experiment_id = str(cfg.get("experiment_id") or DEFAULT_EXPERIMENT_ID)
         ql_cfg = cfg.get("quantlog") or {}
         ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
+        ql_path = _find_latest_run_jsonl(ql_base, experiment_id=experiment_id)
 
     analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
     return 0
