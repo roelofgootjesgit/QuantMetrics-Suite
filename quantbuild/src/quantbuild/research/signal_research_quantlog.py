@@ -56,6 +56,8 @@ def build_component_observed_payload(
 ) -> dict[str, Any]:
     if component_type not in COMPONENT_TYPES:
         raise ValueError(f"invalid component_type: {component_type!r}")
+    metric_values = dict(metrics)
+    signal_is_independent = bool(metric_values.pop("signal_is_independent", False))
     payload: dict[str, Any] = {
         "observation_id": observation_id or str(uuid4()),
         "component_type": component_type,
@@ -63,7 +65,14 @@ def build_component_observed_payload(
         "session_at_signal": session_at_signal,
         "regime_at_signal": regime_at_signal,
     }
-    payload.update(signal_research_metrics(**metrics))
+    payload.update(
+        signal_research_metrics(
+            session_at_signal=session_at_signal,
+            regime_at_signal=regime_at_signal,
+            signal_is_independent=signal_is_independent,
+            **metric_values,
+        )
+    )
     return payload
 
 
@@ -92,8 +101,12 @@ def build_candidate_signal_payload(
         "direction": direction_u,
         "signal_is_independent": signal_is_independent,
     }
-    merged = signal_research_metrics(**metrics)
-    merged["signal_is_independent"] = signal_is_independent
+    merged = signal_research_metrics(
+        session_at_signal=session_at_signal,
+        regime_at_signal=regime_at_signal,
+        signal_is_independent=signal_is_independent,
+        **metrics,
+    )
     payload.update(merged)
     return payload
 
