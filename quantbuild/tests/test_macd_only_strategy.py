@@ -8,6 +8,7 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
     compute_macd_frame,
+    macd_cross_velocity,
     simulate_macd_time_exit_trade,
 )
 
@@ -38,6 +39,10 @@ class TestMacdOnly:
         mf = compute_macd_frame(df, {"fast": 5, "slow": 10, "signal": 3})
         bull, bear = detect_macd_component_observations(mf)
         assert (bull | bear).sum() >= 1
+
+    def test_cross_velocity_is_histogram_delta(self):
+        mf = pd.DataFrame({"histogram": [-0.30, -0.05, 0.08]})
+        assert abs(macd_cross_velocity(mf, 2) - 0.13) < 1e-12
 
     def test_time_exit_within_horizon(self):
         df = _ohlc(50)

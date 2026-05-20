@@ -137,3 +137,33 @@ def test_component_observed_payload_required_keys() -> None:
         "regime_at_signal",
     ):
         assert key in p
+
+
+def test_component_payload_preserves_labels_and_raw_independence() -> None:
+    p = build_component_observed_payload(
+        component_type="MACD_BEAR_CROSS",
+        bar_timestamp="2026-01-01T14:00:00Z",
+        session_at_signal="NEW_YORK",
+        regime_at_signal="TREND",
+        macd_cross_bear=True,
+    )
+    assert p["session_at_signal"] == "NEW_YORK"
+    assert p["regime_at_signal"] == "TREND"
+    assert p["signal_is_independent"] is False
+    assert p["macd_cross_bear"] is True
+
+
+def test_candidate_payload_preserves_labels_and_independence() -> None:
+    p = build_candidate_signal_payload(
+        component_type="BB_LOWER_BREAK",
+        bar_timestamp="2026-01-01T09:00:00Z",
+        session_at_signal="LONDON",
+        regime_at_signal="COMPRESSION",
+        direction="LONG",
+        signal_is_independent=True,
+        bb_lower_break=True,
+    )
+    assert p["session_at_signal"] == "LONDON"
+    assert p["regime_at_signal"] == "COMPRESSION"
+    assert p["signal_is_independent"] is True
+    assert p["bb_lower_break"] is True
