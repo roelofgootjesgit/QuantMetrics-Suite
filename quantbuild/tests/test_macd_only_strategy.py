@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.quantbuild.strategies import macd_only as macd_module
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
@@ -78,3 +79,31 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_collect_entries_debounces_opposite_crosses_globally(self, monkeypatch):
+        dates = pd.date_range("2024-01-01", periods=6, freq="15min", tz="UTC")
+        close = pd.Series([1.00, 1.01, 0.99, 1.00, 1.00, 1.00], index=dates)
+        df = pd.DataFrame(
+            {"open": close, "high": close + 0.001, "low": close - 0.001, "close": close},
+            index=dates,
+        )
+        macd_frame = pd.DataFrame({"histogram": [0.0, 0.1, -0.1, 0.0, 0.0, 0.0]}, index=dates)
+        bull_raw = pd.Series([False, True, False, False, False, False], index=dates)
+        bear_raw = pd.Series([False, False, True, False, False, False], index=dates)
+
+        monkeypatch.setattr(macd_module, "compute_macd_frame", lambda data, cfg: macd_frame)
+        monkeypatch.setattr(macd_module, "compute_atr", lambda data, period=14: pd.Series(0.01, index=dates))
+        monkeypatch.setattr(
+            macd_module,
+            "detect_macd_component_observations",
+            lambda computed_frame: (bull_raw, bear_raw),
+        )
+
+        entries = collect_macd_entry_signals(
+            df,
+            {
+                "macd": {"fast": 5, "slow": 10, "signal": 3},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+            },
+        )
+        assert [e["bar_index"] for e in entries] == [1]
