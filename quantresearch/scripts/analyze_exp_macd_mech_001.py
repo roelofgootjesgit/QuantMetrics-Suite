@@ -33,7 +33,7 @@ from src.quantbuild.strategies.macd_only import (
     macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test
 
 
 def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
@@ -170,7 +170,8 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
+    permutation_signal_indices: list[int] = []
+    permutation_signal_directions: list[str] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +180,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -190,21 +190,30 @@ def analyze(
                 fwd[f"T+{h}"].append(r)
         r8 = _forward_return_r(data, atr_series, i, direction, 8)
         if r8 is not None:
+            permutation_signal_indices.append(i)
+            permutation_signal_directions.append(direction)
             t8_n += 1
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
+    n_bars = len(data)
+    long_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    short_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    for i in range(n_bars):
+        long_r = _forward_return_r(data, atr_series, i, "LONG", 8)
+        short_r = _forward_return_r(data, atr_series, i, "SHORT", 8)
+        if long_r is not None and short_r is not None:
+            long_universe_returns[i] = long_r
+            short_universe_returns[i] = short_r
 
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = directional_permutation_test(
+        long_universe_returns,
+        short_universe_returns,
+        np.array(permutation_signal_indices, dtype=int),
+        permutation_signal_directions,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []

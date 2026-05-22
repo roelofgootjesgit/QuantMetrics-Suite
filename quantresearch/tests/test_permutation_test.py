@@ -1,7 +1,8 @@
 """Tests for signal timestamp permutation test."""
 import numpy as np
+import pytest
 
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test, permutation_test
 
 
 def test_seed_reproducible() -> None:
@@ -42,3 +43,34 @@ def test_empty_signals_returns_neutral() -> None:
     assert result["n_signals"] == 0
     assert result["p_value"] == 1.0
     assert not result["significant"]
+
+
+def test_directional_permutation_scores_short_signals_with_short_outcomes() -> None:
+    long_outcomes = np.array([0.1, -2.0, 0.2, 0.3, 0.4], dtype=float)
+    short_outcomes = -long_outcomes
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        np.array([1], dtype=int),
+        ["SHORT"],
+        n_permutations=20,
+        seed=7,
+    )
+
+    assert result["observed_hit_rate"] == 2.0
+
+
+def test_directional_permutation_rejects_invalid_signal_outcomes() -> None:
+    long_outcomes = np.array([0.1, np.nan, 0.2], dtype=float)
+    short_outcomes = np.array([-0.1, np.nan, -0.2], dtype=float)
+
+    with pytest.raises(ValueError, match="without finite directional outcomes"):
+        directional_permutation_test(
+            long_outcomes,
+            short_outcomes,
+            np.array([1], dtype=int),
+            ["LONG"],
+            n_permutations=20,
+            seed=7,
+        )
