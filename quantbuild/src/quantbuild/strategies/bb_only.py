@@ -117,8 +117,9 @@ def collect_bb_entry_signals(
     atr_series = compute_atr(data, period=14)
     bands = compute_bb_bands(data, bollinger_cfg)
     long_raw, short_raw = detect_bb_component_observations(data, bands)
-    long_ind = apply_independence_to_signals(long_raw, data, atr_series, indep_cfg)
-    short_ind = apply_independence_to_signals(short_raw, data, atr_series, indep_cfg)
+    independent_raw = apply_independence_to_signals(long_raw | short_raw, data, atr_series, indep_cfg)
+    long_ind = long_raw & independent_raw
+    short_ind = short_raw & independent_raw
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
