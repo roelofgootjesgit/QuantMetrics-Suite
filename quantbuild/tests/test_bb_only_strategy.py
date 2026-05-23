@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.quantbuild.strategies import bb_only
 from src.quantbuild.strategies.bb_only import (
     apply_independence_to_signals,
     collect_bb_entry_signals,
@@ -71,6 +72,38 @@ class TestBBOnlySignals:
         indices = [e["bar_index"] for e in entries]
         for a, b in zip(indices, indices[1:]):
             assert b - a >= 4
+
+    def test_collect_entries_respects_independence_across_directions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        df = _eurusd_df(30)
+        long_raw = pd.Series(False, index=df.index)
+        short_raw = pd.Series(False, index=df.index)
+        long_raw.iloc[10] = True
+        short_raw.iloc[11] = True
+        short_raw.iloc[15] = True
+        bands = pd.DataFrame(
+            {
+                "lower": np.full(len(df), 1.0),
+                "mid": np.full(len(df), 1.1),
+                "upper": np.full(len(df), 1.2),
+            },
+            index=df.index,
+        )
+
+        monkeypatch.setattr(bb_only, "detect_bb_component_observations", lambda data, bands: (long_raw, short_raw))
+        monkeypatch.setattr(bb_only, "compute_bb_bands", lambda data, bollinger_cfg: bands)
+        monkeypatch.setattr(
+            bb_only,
+            "compute_atr",
+            lambda data, period=14: pd.Series(0.001, index=data.index),
+        )
+
+        strat = {"signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0}}
+        entries = bb_only.collect_bb_entry_signals(df, strat)
+
+        assert [e["bar_index"] for e in entries] == [10, 15]
+        assert [e["direction"] for e in entries] == ["LONG", "SHORT"]
 
 
 class TestBBMidlineSimulator:
