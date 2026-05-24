@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.quantbuild.strategies import bb_only as bb_only_module
 from src.quantbuild.strategies.bb_only import (
     apply_independence_to_signals,
     collect_bb_entry_signals,
@@ -72,6 +73,38 @@ class TestBBOnlySignals:
         for a, b in zip(indices, indices[1:]):
             assert b - a >= 4
 
+    def test_collect_entries_filters_opposite_direction_clusters(self, monkeypatch):
+        df = _eurusd_df(8)
+        long_raw = pd.Series([False, True, False, False, False, False, False, False], index=df.index)
+        short_raw = pd.Series([False, False, False, True, False, False, False, False], index=df.index)
+        bands = pd.DataFrame(
+            {
+                "mid": np.full(len(df), 1.10),
+                "lower": np.full(len(df), 1.09),
+                "upper": np.full(len(df), 1.11),
+            },
+            index=df.index,
+        )
+        monkeypatch.setattr(bb_only_module, "compute_atr", lambda data, period=14: pd.Series(0.01, index=data.index))
+        monkeypatch.setattr(bb_only_module, "compute_bb_bands", lambda data, cfg: bands)
+        monkeypatch.setattr(
+            bb_only_module,
+            "detect_bb_component_observations",
+            lambda data, band_frame: (long_raw, short_raw),
+        )
+
+        entries = collect_bb_entry_signals(
+            df,
+            {
+                "signal_independence": {
+                    "min_bars_gap": 4,
+                    "min_atr_distance": 0.0,
+                }
+            },
+        )
+
+        assert [e["bar_index"] for e in entries] == [1]
+
 
 class TestBBMidlineSimulator:
     def test_long_hits_midline(self):
@@ -98,6 +131,51 @@ class TestBBMidlineSimulator:
         assert res["exit_reason"] == "midline"
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
+
+    def test_long_wick_touch_hits_midline(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 0.95)
+        close[11] = 0.99
+        high = close + 0.001
+        high[11] = 1.001
+        low = close - 0.001
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=5
+        )
+
+        assert res["exit_reason"] == "midline"
+        assert res["exit_bar_idx"] == 11
+        assert res["result"] == "WIN"
+
+    def test_time_exit_result_follows_pnl(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 1.0)
+        close[12] = 1.02
+        high = close + 0.001
+        low = close - 0.001
+        mid = np.full(n, 2.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=2
+        )
+
+        assert res["exit_reason"] == "time_exit"
+        assert res["profit_r"] > 0
+        assert res["result"] == "WIN"
 
     def test_sl_before_midline(self):
         n = 30

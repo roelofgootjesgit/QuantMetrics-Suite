@@ -92,6 +92,37 @@ def _time_to_adverse_excursion(
     return None
 
 
+def _directional_permutation_inputs(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    horizon: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build a bar-direction outcome universe for directional signal permutation tests."""
+    close_arr = data["close"].values.astype(float)
+    atr_arr = atr_series.values.astype(float)
+    n_bars = len(close_arr)
+    outcomes = np.zeros(n_bars * 2, dtype=float)
+
+    for i in range(n_bars - horizon):
+        atr_v = atr_arr[i]
+        if atr_v <= 0:
+            continue
+        long_r = (close_arr[i + horizon] - close_arr[i]) / (2.0 * atr_v)
+        outcomes[i] = long_r
+        outcomes[n_bars + i] = -long_r
+
+    signal_slots: list[int] = []
+    for sig in entries:
+        i = int(sig["bar_index"])
+        direction = str(sig["direction"])
+        if _forward_return_r(data, atr_series, i, direction, horizon) is None:
+            continue
+        signal_slots.append(i if direction == "LONG" else n_bars + i)
+
+    return outcomes, np.array(signal_slots, dtype=int)
+
+
 def _bb_macd_correlation(data: pd.DataFrame, macd_frame: pd.DataFrame) -> dict[str, Any]:
     bands = bollinger_bands(data["close"], length=20, stddev=2.0)
     bb_any = (data["close"] < bands["lower"]) | (data["close"] > bands["upper"])
@@ -170,7 +201,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +209,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +223,10 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    universe_returns, permutation_signal_indices = _directional_permutation_inputs(
+        data, atr_series, entries, horizon=8
+    )
+    perm = permutation_test(universe_returns, permutation_signal_indices, n_permutations=2000, seed=42)
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []

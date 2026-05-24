@@ -117,8 +117,9 @@ def collect_bb_entry_signals(
     atr_series = compute_atr(data, period=14)
     bands = compute_bb_bands(data, bollinger_cfg)
     long_raw, short_raw = detect_bb_component_observations(data, bands)
-    long_ind = apply_independence_to_signals(long_raw, data, atr_series, indep_cfg)
-    short_ind = apply_independence_to_signals(short_raw, data, atr_series, indep_cfg)
+    combined_ind = apply_independence_to_signals(long_raw | short_raw, data, atr_series, indep_cfg)
+    long_ind = long_raw & combined_ind
+    short_ind = short_raw & combined_ind
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
@@ -210,12 +211,12 @@ def simulate_bb_midline_trade(
             favorable = hi - entry_price
             adverse = entry_price - lo
             sl_hit = lo <= sl
-            mid_hit = close_arr[j] >= mid_v
+            mid_hit = hi >= mid_v
         else:
             favorable = entry_price - lo
             adverse = hi - entry_price
             sl_hit = hi >= sl
-            mid_hit = close_arr[j] <= mid_v
+            mid_hit = lo <= mid_v
 
         max_favorable = max(max_favorable, favorable)
         max_adverse = max(max_adverse, adverse)
@@ -233,7 +234,11 @@ def simulate_bb_midline_trade(
 
         if j == end_j:
             exit_price, exit_ts, exit_bar_idx = float(close_arr[j]), ts_arr[j], j
-            result, exit_reason = "TIMEOUT", "time_exit"
+            if direction == "LONG":
+                result = "WIN" if exit_price > entry_price else ("LOSS" if exit_price < entry_price else "TIMEOUT")
+            else:
+                result = "WIN" if exit_price < entry_price else ("LOSS" if exit_price > entry_price else "TIMEOUT")
+            exit_reason = "time_exit"
 
     risk = abs(entry_price - sl)
     mae_r = (max_adverse / risk) if risk else 0.0

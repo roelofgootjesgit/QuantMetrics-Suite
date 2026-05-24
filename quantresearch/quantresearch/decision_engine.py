@@ -28,6 +28,7 @@ def decide_comparison(
 
     if isinstance(vtc, int) and vtc < MIN_TRADE_COUNT_INCONCLUSIVE:
         return "inconclusive_low_sample"
+    variant_sample_ok = isinstance(vtc, int) and vtc >= MIN_TRADE_COUNT_INCONCLUSIVE
 
     if isinstance(btc, int) and isinstance(vtc, int):
         if vtc < max(2, btc // 10) and btc >= 10:
@@ -51,14 +52,10 @@ def decide_comparison(
                 if mae_v <= mae_b and mfe_v >= mfe_b:
                     quality_up = True
 
-        if dmr >= MEAN_R_MATERIAL:
-            if isinstance(vtc, int) and vtc >= MIN_TRADE_COUNT_INCONCLUSIVE:
-                return "variant_outperforms_baseline"
-
-        if quality_up and dmr >= 0:
+        if dmr >= MEAN_R_MATERIAL and variant_sample_ok:
             return "variant_outperforms_baseline"
 
-        if dmr >= MEAN_R_MATERIAL:
+        if quality_up and dmr >= 0 and variant_sample_ok:
             return "variant_outperforms_baseline"
 
     return "inconclusive_or_mixed"
