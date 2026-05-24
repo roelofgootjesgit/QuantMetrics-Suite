@@ -41,6 +41,12 @@ def resolve_quantresearch_root() -> Optional[Path]:
     return None
 
 
+def _quantlog_consolidated_source(ql_emitter: QuantLogEmitter) -> Path:
+    if ql_emitter.consolidated_path is not None:
+        return ql_emitter.consolidated_path
+    return ql_emitter.base_path / "runs" / f"{ql_emitter.run_id}.jsonl"
+
+
 def invoke_quantresearch_run_bundle(
     cfg: dict[str, Any],
     ql_emitter: QuantLogEmitter | None,
@@ -67,7 +73,7 @@ def invoke_quantresearch_run_bundle(
     dest.mkdir(parents=True, exist_ok=True)
 
     qb_root = quantbuild_project_root()
-    jsonl_src = qb_root / "data" / "quantlog_events" / "runs" / f"{ql_emitter.run_id}.jsonl"
+    jsonl_src = _quantlog_consolidated_source(ql_emitter)
     if jsonl_src.is_file():
         shutil.copy2(jsonl_src, dest / "quantlog_events.jsonl")
     else:

@@ -29,6 +29,14 @@ def test_decide_negative_mean_r():
     assert decide_comparison(b, v, dlt) == "baseline_preferred"
 
 
+def test_decide_positive_mean_requires_variant_sample_size():
+    b = {"mean_r": 0.0, "trade_count": 50}
+    dlt = {"mean_r": 0.2}
+
+    assert decide_comparison(b, {"mean_r": 0.2}, dlt) == "inconclusive_or_mixed"
+    assert decide_comparison(b, {"mean_r": 0.2, "trade_count": 2}, dlt) == "inconclusive_low_sample"
+
+
 def test_aliases_expectancy_r():
     baseline = {"expectancy_r": -0.727, "total_trades": 11}
     variant = {"mean_r": 0.5, "trade_count": 8}
