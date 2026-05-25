@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import src.quantbuild.strategies.macd_only as macd_only_module
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
@@ -78,3 +79,52 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_collect_entries_applies_independence_across_directions(self, monkeypatch):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.linspace(1.0, 1.02, n)
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close + 0.0001,
+                "low": close - 0.0001,
+                "close": close,
+            },
+            index=dates,
+        )
+        bull = pd.Series(False, index=dates)
+        bear = pd.Series(False, index=dates)
+        bull.iloc[5] = True
+        bear.iloc[7] = True
+        bull.iloc[11] = True
+        macd_frame = pd.DataFrame(
+            {
+                "macd_line": np.zeros(n),
+                "signal_line": np.zeros(n),
+                "histogram": np.arange(n, dtype=float),
+                "bullish_cross": bull,
+                "bearish_cross": bear,
+            },
+            index=dates,
+        )
+
+        monkeypatch.setattr(macd_only_module, "compute_macd_frame", lambda data, cfg: macd_frame)
+        monkeypatch.setattr(
+            macd_only_module,
+            "compute_atr",
+            lambda data, period=14: pd.Series(0.001, index=data.index),
+        )
+
+        entries = collect_macd_entry_signals(
+            df,
+            {
+                "signal_independence": {
+                    "min_bars_gap": 4,
+                    "min_atr_distance": 0.0,
+                }
+            },
+        )
+
+        assert [entry["bar_index"] for entry in entries] == [5, 11]
+        assert [entry["direction"] for entry in entries] == ["LONG", "LONG"]
