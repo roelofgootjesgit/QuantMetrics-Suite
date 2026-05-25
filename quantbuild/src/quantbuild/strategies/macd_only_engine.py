@@ -30,6 +30,7 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     compute_macd_frame,
     detect_macd_component_observations,
+    macd_cross_velocity,
     macd_only_strategy_cfg,
     simulate_macd_time_exit_trade,
 )
@@ -63,6 +64,7 @@ def run_macd_only_backtest(
     strategy_id = str(cfg.get("experiment_id") or STRATEGY_ID)
 
     if ql_emitter:
+        component_trace_by_bar: Dict[int, str] = {}
         for i in range(len(data)):
             ts = data.index[i]
             ts_iso = _bar_timestamp_utc_iso(ts)
@@ -70,10 +72,13 @@ def run_macd_only_backtest(
                 regime_series.iloc[i] if regime_series is not None and i < len(regime_series) else None
             )
             sess_lbl = session_at_signal_label(ts, session_mode)
+            velocity = macd_cross_velocity(macd_frame, i)
             if bull_raw.iloc[i]:
+                trace_id = str(uuid4())
+                component_trace_by_bar[i] = trace_id
                 ql_emitter.emit(
                     event_type="component_observed",
-                    trace_id=str(uuid4()),
+                    trace_id=trace_id,
                     timestamp_utc=ts_iso,
                     account_id=account_id,
                     strategy_id=strategy_id,
@@ -84,13 +89,15 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bull=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=velocity,
                     ),
                 )
             if bear_raw.iloc[i]:
+                trace_id = str(uuid4())
+                component_trace_by_bar[i] = trace_id
                 ql_emitter.emit(
                     event_type="component_observed",
-                    trace_id=str(uuid4()),
+                    trace_id=trace_id,
                     timestamp_utc=ts_iso,
                     account_id=account_id,
                     strategy_id=strategy_id,
@@ -101,9 +108,11 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bear=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=velocity,
                     ),
                 )
+    else:
+        component_trace_by_bar = {}
 
     entry_signals = collect_macd_entry_signals(
         data, strat_cfg, session_mode=session_mode, regime_series=regime_series
@@ -134,9 +143,10 @@ def run_macd_only_backtest(
             if ql_emitter:
                 dcid = new_decision_cycle_id(prefix="dc_macd")
                 eff = canonical_no_action_reason("spread_block")
+                trace_id = component_trace_by_bar.get(i, str(uuid4()))
                 ql_emitter.emit(
                     event_type="trade_action",
-                    trace_id=str(uuid4()),
+                    trace_id=trace_id,
                     timestamp_utc=_bar_timestamp_utc_iso(entry_ts),
                     account_id=account_id,
                     strategy_id=strategy_id,
@@ -148,7 +158,7 @@ def run_macd_only_backtest(
 
         direction = sig["direction"]
         ts_iso = _bar_timestamp_utc_iso(entry_ts)
-        trace_id = str(uuid4())
+        trace_id = component_trace_by_bar.get(i, str(uuid4()))
         decision_cycle_id = new_decision_cycle_id(prefix="dc_macd")
         trade_ref = f"BT-{trace_id[:8]}"
 

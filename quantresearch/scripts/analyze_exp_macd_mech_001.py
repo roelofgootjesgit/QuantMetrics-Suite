@@ -23,25 +23,13 @@ for p in (_QB, _QB / "src", _QR):
 from src.quantbuild.config import load_config, quantbuild_repo_root
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.indicators.bollinger import bollinger_bands
-from src.quantbuild.indicators.macd import macd as compute_macd
 from src.quantbuild.io.parquet_loader import load_parquet
 from src.quantbuild.strategies.macd_only import (
-    apply_independence_to_signals,
     collect_macd_entry_signals,
+    compute_macd_frame,
     detect_macd_component_observations,
     macd_only_strategy_cfg,
-    macd_cross_velocity,
-    compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
-
-
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
-    runs = ql_base / "runs"
-    if not runs.is_dir():
-        return None
-    files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
 
 
 def _forward_return_r(
@@ -62,6 +50,79 @@ def _forward_return_r(
     risk = 2.0 * atr_v
     move = exit_p - entry if direction == "LONG" else entry - exit_p
     return move / risk
+
+
+def _directional_permutation_test(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+    n_permutations: int = 2000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    """Permutation test preserving each signal's LONG/SHORT direction."""
+    observed_by_direction: dict[str, list[float]] = {"LONG": [], "SHORT": []}
+    for sig in entries:
+        direction = str(sig["direction"])
+        if direction not in observed_by_direction:
+            continue
+        r = _forward_return_r(data, atr_series, int(sig["bar_index"]), direction, horizon)
+        if r is not None and np.isfinite(r):
+            observed_by_direction[direction].append(float(r))
+
+    n_signals = sum(len(v) for v in observed_by_direction.values())
+    if n_signals == 0:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+            "horizon_bars": horizon,
+        }
+
+    random_pools: dict[str, np.ndarray] = {}
+    for direction in ("LONG", "SHORT"):
+        vals: list[float] = []
+        for i in range(len(data)):
+            r = _forward_return_r(data, atr_series, i, direction, horizon)
+            if r is not None and np.isfinite(r):
+                vals.append(float(r))
+        if observed_by_direction[direction] and not vals:
+            raise ValueError(f"no valid random outcomes for {direction} signals")
+        random_pools[direction] = np.array(vals, dtype=float)
+
+    observed = float(
+        np.mean([r for vals in observed_by_direction.values() for r in vals])
+    )
+    rng = np.random.default_rng(seed)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    for i in range(n_permutations):
+        sampled: list[float] = []
+        for direction, observed_vals in observed_by_direction.items():
+            n_direction = len(observed_vals)
+            if not n_direction:
+                continue
+            pool = random_pools[direction]
+            random_values = rng.choice(pool, size=n_direction, replace=n_direction > len(pool))
+            sampled.extend(float(v) for v in random_values)
+        perm_rates[i] = float(np.mean(sampled))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed))
+    return {
+        "observed_hit_rate": observed,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": n_signals,
+        "n_permutations": n_permutations,
+        "seed": seed,
+        "horizon_bars": horizon,
+    }
 
 
 def _time_to_adverse_excursion(
@@ -170,7 +231,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +239,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +253,14 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = _directional_permutation_test(
+        data,
+        atr_series,
+        entries,
+        horizon=8,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
@@ -298,7 +354,12 @@ def main() -> int:
         type=Path,
         default=_QB / "configs" / "exp_macd_mech_001.yaml",
     )
-    parser.add_argument("--quantlog", type=Path, default=None, help="Path to run .jsonl")
+    parser.add_argument(
+        "--quantlog",
+        type=Path,
+        default=None,
+        help="Path to the matching run .jsonl; omit to skip backtest trade stats",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -306,14 +367,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    ql_path = args.quantlog
-    if ql_path is None:
-        cfg = load_config(args.config)
-        ql_cfg = cfg.get("quantlog") or {}
-        ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
-
-    analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
+    analyze(config_path=args.config, quantlog_path=args.quantlog, output_dir=args.output_dir)
     return 0
 
 
