@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -141,9 +143,81 @@ class TestBBOnlyBacktestEngine:
                 "consolidated_run_file": str(tmp_path / "events.jsonl"),
             },
         }
-        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD")
+        regime_series = pd.Series(["TREND"] * len(df), index=df.index)
+        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD", regime_series=regime_series)
         assert isinstance(trades, list)
         ql_file = tmp_path / "events.jsonl"
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+            closed = [json.loads(ln)["payload"] for ln in lines if json.loads(ln)["event_type"] == "trade_closed"]
+            assert closed
+            assert all(p["regime"] == "trend" for p in closed)
+            assert all(p["session"] for p in closed)
+
+    def test_trade_closed_quantlog_includes_entry_regime_session(self, tmp_path, monkeypatch):
+        from src.quantbuild.strategies import bb_only_engine as engine
+
+        df = _eurusd_df(40)
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": {
+                "bollinger": {"length": 20, "stddev": 2.0},
+                "signal_independence": {"min_bars_gap": 1, "min_atr_distance": 0.0},
+            },
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(tmp_path / "events.jsonl"),
+            },
+        }
+        signal = {
+            "bar_index": 20,
+            "direction": "LONG",
+            "component_type": "BB_LOWER_BREAK",
+            "session_at_signal": "LONDON",
+            "regime_at_signal": "TREND",
+            "bb_lower_break": True,
+            "bb_upper_break": False,
+            "bb_extension_normalized_atr": 1.25,
+        }
+        result = {
+            "entry_price": 1.1,
+            "exit_price": 1.101,
+            "sl": 1.098,
+            "tp": 1.1,
+            "exit_ts": df.index[24],
+            "exit_bar_idx": 24,
+            "profit_usd": 0.001,
+            "profit_r": 0.5,
+            "result": "WIN",
+            "exit_reason": "midline",
+            "bars_held": 4,
+            "bars_to_midline": 4,
+            "hit_midline_before_sl": True,
+            "mae_r": 0.1,
+            "mfe_r": 0.6,
+        }
+        false_series = pd.Series(False, index=df.index)
+        monkeypatch.setattr(engine, "detect_bb_component_observations", lambda *_args, **_kwargs: (false_series, false_series))
+        monkeypatch.setattr(engine, "collect_bb_entry_signals", lambda *_args, **_kwargs: [signal])
+        monkeypatch.setattr(engine, "simulate_bb_midline_trade", lambda *_args, **_kwargs: result)
+
+        trades = engine.run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades
+        lines = [
+            json.loads(ln)
+            for ln in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+        closed = [ev["payload"] for ev in lines if ev["event_type"] == "trade_closed"]
+        assert closed
+        assert closed[0]["regime"] == "trend"
+        assert closed[0]["session"]
