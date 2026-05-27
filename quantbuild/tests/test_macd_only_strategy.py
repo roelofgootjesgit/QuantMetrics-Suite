@@ -1,6 +1,8 @@
 """Tests for MACD-only strategy (EXP-MACD-MECH-001)."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -78,3 +80,56 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_trade_closed_quantlog_includes_entry_regime_session(self, tmp_path):
+        from src.quantbuild.strategies.macd_only_engine import run_macd_only_backtest
+
+        close = np.concatenate(
+            [
+                np.linspace(1.12, 1.08, 40),
+                np.linspace(1.08, 1.13, 50),
+                np.linspace(1.13, 1.09, 50),
+            ]
+        )
+        dates = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close + 0.0002,
+                "low": close - 0.0002,
+                "close": close,
+            },
+            index=dates,
+        )
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.00005},
+            "strategy": {
+                "macd": {"fast": 5, "slow": 10, "signal": 3},
+                "signal_independence": {"min_bars_gap": 1, "min_atr_distance": 0.0},
+            },
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 10.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(tmp_path / "events.jsonl"),
+            },
+        }
+        regime_series = pd.Series(["EXPANSION"] * len(df), index=df.index)
+
+        trades = run_macd_only_backtest(cfg, df, symbol="EURUSD", regime_series=regime_series)
+
+        assert trades
+        lines = [
+            json.loads(ln)
+            for ln in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+        closed = [ev["payload"] for ev in lines if ev["event_type"] == "trade_closed"]
+        assert closed
+        assert all(p["regime"] == "expansion" for p in closed)
+        assert all(p["session"] for p in closed)

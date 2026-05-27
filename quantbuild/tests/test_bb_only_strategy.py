@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -141,9 +143,15 @@ class TestBBOnlyBacktestEngine:
                 "consolidated_run_file": str(tmp_path / "events.jsonl"),
             },
         }
-        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD")
+        regime_series = pd.Series(["TREND"] * len(df), index=df.index)
+        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD", regime_series=regime_series)
+        assert trades
         assert isinstance(trades, list)
         ql_file = tmp_path / "events.jsonl"
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+            closed = [json.loads(ln)["payload"] for ln in lines if json.loads(ln)["event_type"] == "trade_closed"]
+            assert closed
+            assert all(p["regime"] == "trend" for p in closed)
+            assert all(p["session"] for p in closed)
