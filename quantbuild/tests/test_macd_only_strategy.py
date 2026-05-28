@@ -78,3 +78,39 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_collect_entries_applies_independence_across_directions(self, monkeypatch):
+        from src.quantbuild.strategies import macd_only
+
+        df = _ohlc(30)
+        bull_raw = pd.Series(False, index=df.index)
+        bear_raw = pd.Series(False, index=df.index)
+        bull_raw.iloc[10] = True
+        bear_raw.iloc[12] = True
+        macd_frame = pd.DataFrame(
+            {
+                "macd": np.zeros(len(df)),
+                "signal": np.zeros(len(df)),
+                "histogram": np.linspace(-0.1, 0.1, len(df)),
+                "bullish_cross": bull_raw,
+                "bearish_cross": bear_raw,
+            },
+            index=df.index,
+        )
+        monkeypatch.setattr(macd_only, "compute_macd_frame", lambda data, cfg: macd_frame)
+        monkeypatch.setattr(macd_only, "compute_atr", lambda data, period=14: pd.Series(0.01, index=data.index))
+        monkeypatch.setattr(
+            macd_only,
+            "detect_macd_component_observations",
+            lambda frame: (bull_raw, bear_raw),
+        )
+
+        entries = collect_macd_entry_signals(
+            df,
+            {
+                "macd": {"fast": 8, "slow": 17, "signal": 5},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+            },
+        )
+
+        assert [e["bar_index"] for e in entries] == [10]

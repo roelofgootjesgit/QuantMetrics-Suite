@@ -26,14 +26,11 @@ from src.quantbuild.indicators.bollinger import bollinger_bands
 from src.quantbuild.indicators.macd import macd as compute_macd
 from src.quantbuild.io.parquet_loader import load_parquet
 from src.quantbuild.strategies.macd_only import (
-    apply_independence_to_signals,
     collect_macd_entry_signals,
     detect_macd_component_observations,
     macd_only_strategy_cfg,
-    macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
 
 
 def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
@@ -62,6 +59,74 @@ def _forward_return_r(
     risk = 2.0 * atr_v
     move = exit_p - entry if direction == "LONG" else entry - exit_p
     return move / risk
+
+
+def _directional_permutation_test(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    signals: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+    n_permutations: int = 1000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    """Compare signal returns with random timestamps while preserving directions."""
+    observed: list[float] = []
+    directions: list[str] = []
+    for sig in signals:
+        r = _forward_return_r(
+            data,
+            atr_series,
+            int(sig["bar_index"]),
+            str(sig["direction"]),
+            horizon,
+        )
+        if r is not None:
+            observed.append(r)
+            directions.append(str(sig["direction"]))
+
+    if not observed:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+        }
+
+    valid_random_bars: list[int] = []
+    for i in range(0, max(0, len(data) - horizon)):
+        atr_v = float(atr_series.iloc[i])
+        if atr_v > 0 and np.isfinite(atr_v):
+            valid_random_bars.append(i)
+    if len(valid_random_bars) < len(observed):
+        raise ValueError("not enough valid bars for directional permutation test")
+
+    observed_mean = float(np.mean(observed))
+    rng = np.random.default_rng(seed)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    valid = np.array(valid_random_bars, dtype=int)
+    for i in range(n_permutations):
+        random_idx = rng.choice(valid, size=len(observed), replace=False)
+        sampled = [
+            _forward_return_r(data, atr_series, int(bar_i), direction, horizon)
+            for bar_i, direction in zip(random_idx, directions)
+        ]
+        perm_rates[i] = float(np.mean([r for r in sampled if r is not None]))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed_mean))
+    return {
+        "observed_hit_rate": observed_mean,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": len(observed),
+        "n_permutations": n_permutations,
+        "seed": seed,
+    }
 
 
 def _time_to_adverse_excursion(
@@ -170,7 +235,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +243,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +257,7 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = _directional_permutation_test(data, atr_series, entries, horizon=8, n_permutations=2000, seed=42)
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
