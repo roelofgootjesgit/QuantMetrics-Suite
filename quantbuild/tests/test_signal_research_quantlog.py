@@ -116,6 +116,11 @@ def test_emitter_research_events_validate(tmp_path: Path) -> None:
     path = _emit_research_chain(tmp_path)
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(lines) == 5
+    events = [json.loads(ln) for ln in lines]
+    assert events[0]["payload"]["session_at_signal"] == "NEW_YORK"
+    assert events[0]["payload"]["regime_at_signal"] == "TREND"
+    assert events[1]["payload"]["session_at_signal"] == "NEW_YORK"
+    assert events[1]["payload"]["regime_at_signal"] == "TREND"
     report = validate_path(path)
     errors = [i for i in report.issues if i.level == "error"]
     assert errors == [], [e.message for e in errors]

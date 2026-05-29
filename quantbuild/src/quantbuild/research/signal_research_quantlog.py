@@ -64,6 +64,8 @@ def build_component_observed_payload(
         "regime_at_signal": regime_at_signal,
     }
     payload.update(signal_research_metrics(**metrics))
+    payload["session_at_signal"] = session_at_signal
+    payload["regime_at_signal"] = regime_at_signal
     return payload
 
 
@@ -95,6 +97,8 @@ def build_candidate_signal_payload(
     merged = signal_research_metrics(**metrics)
     merged["signal_is_independent"] = signal_is_independent
     payload.update(merged)
+    payload["session_at_signal"] = session_at_signal
+    payload["regime_at_signal"] = regime_at_signal
     return payload
 
 
