@@ -63,6 +63,36 @@ class TestValidator(unittest.TestCase):
             self.assertEqual(report.lines_scanned, 1)
             self.assertIn("missing_payload_field[trade_action]: reason", error_messages)
 
+    def test_validate_path_reports_invalid_timestamp_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = {
+                "event_id": "00000000-0000-0000-0000-000000000014",
+                "event_type": "trade_action",
+                "event_version": 1,
+                "timestamp_utc": "not-a-timestamp",
+                "ingested_at_utc": "2026-03-29T18:00:03Z",
+                "source_system": "quantbuild",
+                "source_component": "decision_engine",
+                "environment": "paper",
+                "run_id": "run_bad_ts",
+                "session_id": "session_bad_ts",
+                "source_seq": 1,
+                "trace_id": "trace_bad_ts",
+                "decision_cycle_id": "dc_bad_ts",
+                "severity": "info",
+                "payload": {"decision": "NO_ACTION", "reason": "no_setup"},
+            }
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+
+            self.assertEqual(report.files_scanned, 1)
+            self.assertEqual(report.lines_scanned, 1)
+            self.assertIn("invalid_timestamp_utc", error_messages)
+
     def test_validate_path_accepts_valid_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir)

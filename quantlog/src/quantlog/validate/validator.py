@@ -337,7 +337,10 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
 
-    if "timestamp_utc" in event and not _is_utc_iso8601(event["timestamp_utc"]):
+    timestamp_valid = True
+    if "timestamp_utc" in event:
+        timestamp_valid = _is_utc_iso8601(event["timestamp_utc"])
+    if "timestamp_utc" in event and not timestamp_valid:
         issues.append(
             ValidationIssue(
                 level="error",
@@ -347,7 +350,10 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
 
-    if "ingested_at_utc" in event and not _is_utc_iso8601(event["ingested_at_utc"]):
+    ingested_valid = True
+    if "ingested_at_utc" in event:
+        ingested_valid = _is_utc_iso8601(event["ingested_at_utc"])
+    if "ingested_at_utc" in event and not ingested_valid:
         issues.append(
             ValidationIssue(
                 level="error",
@@ -356,7 +362,12 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
                 message="invalid_ingested_at_utc",
             )
         )
-    elif "timestamp_utc" in event and "ingested_at_utc" in event:
+    if (
+        timestamp_valid
+        and ingested_valid
+        and "timestamp_utc" in event
+        and "ingested_at_utc" in event
+    ):
         ts_dt = datetime.fromisoformat(str(event["timestamp_utc"]).replace("Z", "+00:00"))
         ingest_dt = datetime.fromisoformat(str(event["ingested_at_utc"]).replace("Z", "+00:00"))
         if ingest_dt < ts_dt:
