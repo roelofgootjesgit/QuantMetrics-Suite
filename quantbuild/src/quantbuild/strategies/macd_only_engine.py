@@ -30,6 +30,7 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     compute_macd_frame,
     detect_macd_component_observations,
+    macd_cross_velocity,
     macd_only_strategy_cfg,
     simulate_macd_time_exit_trade,
 )
@@ -70,6 +71,7 @@ def run_macd_only_backtest(
                 regime_series.iloc[i] if regime_series is not None and i < len(regime_series) else None
             )
             sess_lbl = session_at_signal_label(ts, session_mode)
+            velocity = macd_cross_velocity(macd_frame, i)
             if bull_raw.iloc[i]:
                 ql_emitter.emit(
                     event_type="component_observed",
@@ -84,7 +86,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bull=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=velocity,
                     ),
                 )
             if bear_raw.iloc[i]:
@@ -101,7 +103,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bear=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=velocity,
                     ),
                 )
 

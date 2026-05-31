@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import src.quantbuild.strategies.macd_only_engine as macd_only_engine
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
@@ -78,3 +79,44 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_component_observed_uses_cross_velocity_delta(self, monkeypatch):
+        df = _ohlc(6)
+        bull = pd.Series(False, index=df.index)
+        bear = pd.Series(False, index=df.index)
+        bull.iloc[2] = True
+        macd_frame = pd.DataFrame(
+            {
+                "macd_line": np.zeros(len(df)),
+                "signal_line": np.zeros(len(df)),
+                "histogram": [0.0, 1.0, 3.0, 3.5, 4.0, 4.5],
+                "bullish_cross": bull,
+                "bearish_cross": bear,
+            },
+            index=df.index,
+        )
+        emitted = []
+
+        class FakeEmitter:
+            run_id = "run_macd_velocity"
+
+            def emit(self, **kwargs):
+                emitted.append(kwargs)
+
+        monkeypatch.setattr(macd_only_engine, "compute_macd_frame", lambda data, cfg: macd_frame)
+        monkeypatch.setattr(macd_only_engine, "_init_backtest_quantlog", lambda cfg: FakeEmitter())
+        monkeypatch.setattr(macd_only_engine, "collect_macd_entry_signals", lambda *args, **kwargs: [])
+
+        macd_only_engine.run_macd_only_backtest(
+            {
+                "experiment_id": "EXP-MACD-MECH-001",
+                "strategy": {"macd": {}},
+                "quantlog": {"enabled": True},
+            },
+            df,
+            symbol="EURUSD",
+        )
+
+        observed = [event for event in emitted if event["event_type"] == "component_observed"]
+        assert len(observed) == 1
+        assert observed[0]["payload"]["macd_cross_velocity"] == 2.0
