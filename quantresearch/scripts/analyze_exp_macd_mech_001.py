@@ -26,14 +26,11 @@ from src.quantbuild.indicators.bollinger import bollinger_bands
 from src.quantbuild.indicators.macd import macd as compute_macd
 from src.quantbuild.io.parquet_loader import load_parquet
 from src.quantbuild.strategies.macd_only import (
-    apply_independence_to_signals,
     collect_macd_entry_signals,
     detect_macd_component_observations,
     macd_only_strategy_cfg,
-    macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
 
 
 def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
@@ -57,11 +54,92 @@ def _forward_return_r(
     entry = float(data["close"].iloc[bar_i])
     exit_p = float(data["close"].iloc[j])
     atr_v = float(atr_series.iloc[bar_i])
-    if atr_v <= 0:
+    if not np.isfinite(atr_v) or atr_v <= 0:
         return None
     risk = 2.0 * atr_v
     move = exit_p - entry if direction == "LONG" else entry - exit_p
     return move / risk
+
+
+def _directional_t8_permutation_test(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+    n_permutations: int = 2000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    """Direction-matched timestamp permutation for T+horizon win rate."""
+    signal_hits: list[float] = []
+    signal_directions: list[str] = []
+    for sig in entries:
+        i = int(sig["bar_index"])
+        direction = str(sig["direction"]).upper()
+        r = _forward_return_r(data, atr_series, i, direction, horizon)
+        if r is None:
+            continue
+        signal_hits.append(1.0 if r > 0 else 0.0)
+        signal_directions.append(direction)
+
+    if not signal_hits:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+        }
+
+    eligible_indices: list[int] = []
+    long_hits: list[float] = []
+    short_hits: list[float] = []
+    for i in range(len(data)):
+        long_r = _forward_return_r(data, atr_series, i, "LONG", horizon)
+        short_r = _forward_return_r(data, atr_series, i, "SHORT", horizon)
+        if long_r is None or short_r is None:
+            continue
+        eligible_indices.append(i)
+        long_hits.append(1.0 if long_r > 0 else 0.0)
+        short_hits.append(1.0 if short_r > 0 else 0.0)
+
+    if not eligible_indices:
+        return {
+            "observed_hit_rate": float(np.mean(signal_hits)),
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": len(signal_hits),
+            "n_permutations": n_permutations,
+            "seed": seed,
+        }
+
+    observed = float(np.mean(signal_hits))
+    rng = np.random.default_rng(seed)
+    long_arr = np.asarray(long_hits, dtype=float)
+    short_arr = np.asarray(short_hits, dtype=float)
+    direction_arr = np.asarray(signal_directions)
+    n_signals = len(signal_hits)
+    replace = n_signals > len(eligible_indices)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    for k in range(n_permutations):
+        random_pos = rng.choice(len(eligible_indices), size=n_signals, replace=replace)
+        hits = np.where(direction_arr == "LONG", long_arr[random_pos], short_arr[random_pos])
+        perm_rates[k] = float(np.mean(hits))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed))
+    return {
+        "observed_hit_rate": observed,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": n_signals,
+        "n_permutations": n_permutations,
+        "seed": seed,
+    }
 
 
 def _time_to_adverse_excursion(
@@ -170,7 +248,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +256,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +270,14 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = _directional_t8_permutation_test(
+        data,
+        atr_series,
+        entries,
+        horizon=8,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
