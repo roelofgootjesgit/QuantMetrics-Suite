@@ -1,8 +1,11 @@
 """Tests for MACD-only strategy (EXP-MACD-MECH-001)."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
@@ -78,3 +81,45 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_component_observed_velocity_uses_histogram_delta(self, tmp_path, monkeypatch):
+        from src.quantbuild.strategies import macd_only_engine as engine
+
+        df = _ohlc(4)
+        macd_frame = pd.DataFrame(
+            {
+                "histogram": [0.10, -0.20, 0.30, 0.40],
+                "bullish_cross": [False, True, False, False],
+                "bearish_cross": [False, False, True, False],
+            },
+            index=df.index,
+        )
+        monkeypatch.setattr(engine, "compute_macd_frame", lambda _data, _cfg: macd_frame)
+        monkeypatch.setattr(engine, "collect_macd_entry_signals", lambda *_args, **_kwargs: [])
+
+        event_path = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001-TEST",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": {"macd": {"fast": 5, "slow": 10, "signal": 3}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(event_path),
+            },
+        }
+
+        engine.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        component_payloads = [
+            event["payload"] for event in events if event["event_type"] == "component_observed"
+        ]
+        assert [p["component_type"] for p in component_payloads] == [
+            "MACD_BULL_CROSS",
+            "MACD_BEAR_CROSS",
+        ]
+        assert [p["macd_cross_velocity"] for p in component_payloads] == pytest.approx(
+            [-0.30, 0.50]
+        )
