@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -119,6 +121,18 @@ class TestBBMidlineSimulator:
 
 
 class TestBBOnlyBacktestEngine:
+    def test_spread_guard_uses_registered_xauusd_pip_size(self):
+        from src.quantbuild.strategies.bb_only_engine import _spread_ok
+
+        cfg = {
+            "broker": {"provider": "ctrader", "mock_spread": 0.30},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 30.0}},
+        }
+        assert _spread_ok(cfg, "XAUUSD")
+
+        cfg["guards"]["spread"]["max_spread_pips"] = 29.9
+        assert not _spread_ok(cfg, "XAUUSD")
+
     def test_run_on_synthetic_data(self, tmp_path):
         from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
 
@@ -147,3 +161,68 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_component_observed_records_bb_extension_metric(self, tmp_path):
+        from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
+
+        df = _trend_down_through_bands(150)
+        ql_file = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"provider": "ctrader", "mock_spread": 0.00010},
+            "strategy": {
+                "bollinger": {"length": 20, "stddev": 2.0},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 1.5},
+            },
+            "exit": {"time_exit_bars": 32},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": False}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+        run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        events = [json.loads(line) for line in ql_file.read_text(encoding="utf-8").splitlines()]
+        components = [e["payload"] for e in events if e["event_type"] == "component_observed"]
+        assert components
+        assert any(p["bb_extension_normalized_atr"] > 0 for p in components)
+
+    def test_zero_signal_run_creates_empty_consolidated_quantlog_file(self, tmp_path):
+        from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
+
+        dates = pd.date_range("2024-01-01", periods=80, freq="15min", tz="UTC")
+        close = np.full(len(dates), 1.10)
+        df = pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close},
+            index=dates,
+        )
+        ql_file = tmp_path / "empty.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"provider": "ctrader", "mock_spread": 0.00010},
+            "strategy": {
+                "bollinger": {"length": 20, "stddev": 2.0},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 1.5},
+            },
+            "exit": {"time_exit_bars": 32},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": False}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+
+        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        assert ql_file.is_file()
+        assert ql_file.read_text(encoding="utf-8") == ""

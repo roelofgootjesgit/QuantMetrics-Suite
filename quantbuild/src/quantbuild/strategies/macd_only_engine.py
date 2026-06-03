@@ -24,12 +24,13 @@ from src.quantbuild.research.signal_research_quantlog import (
     build_trade_closed_research_payload,
 )
 from src.quantbuild.strategies.bb_only import regime_at_signal_label, session_at_signal_label
-from src.quantbuild.strategies.bb_only_engine import _pip_size, _spread_ok
+from src.quantbuild.strategies.bb_only_engine import _ensure_consolidated_quantlog_file, _spread_ok
 from src.quantbuild.strategies.macd_only import (
     STRATEGY_ID,
     collect_macd_entry_signals,
     compute_macd_frame,
     detect_macd_component_observations,
+    macd_cross_velocity,
     macd_only_strategy_cfg,
     simulate_macd_time_exit_trade,
 )
@@ -84,7 +85,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bull=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=macd_cross_velocity(macd_frame, i),
                     ),
                 )
             if bear_raw.iloc[i]:
@@ -101,7 +102,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bear=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=macd_cross_velocity(macd_frame, i),
                     ),
                 )
 
@@ -277,6 +278,8 @@ def run_macd_only_backtest(
 
     logger.info("MACD-only backtest %s: %d trades", symbol, len(trades))
     maybe_write_trade_r_series_fallback(cfg, trades, trade_order_refs)
+    if ql_emitter:
+        _ensure_consolidated_quantlog_file(ql_emitter)
 
     try:
         from src.quantbuild.integration.quantanalytics_post_run import invoke_quantanalytics_after_quantlog
