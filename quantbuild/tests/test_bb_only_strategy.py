@@ -165,7 +165,18 @@ class TestBBOnlyBacktestEngine:
     def test_component_observed_records_bb_extension_metric(self, tmp_path):
         from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
 
-        df = _trend_down_through_bands(150)
+        dates = pd.date_range("2024-01-01", periods=80, freq="15min", tz="UTC")
+        close = np.full(len(dates), 1.10)
+        close[30] = 1.00
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close + 0.0002,
+                "low": close - 0.0002,
+                "close": close,
+            },
+            index=dates,
+        )
         ql_file = tmp_path / "events.jsonl"
         cfg = {
             "experiment_id": "EXP-BB-MECH-001-TEST",
