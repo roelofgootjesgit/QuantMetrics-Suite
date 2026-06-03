@@ -17,6 +17,7 @@ from src.quantbuild.backtest.engine import (
 from src.quantbuild.data.sessions import session_from_timestamp
 from src.quantbuild.execution.quantlog_no_action import canonical_no_action_reason
 from src.quantbuild.execution.signal_evaluated_payload import new_decision_cycle_id
+from src.quantbuild.execution.symbol_registry import get_symbol_spec
 from src.quantbuild.export.trade_r_series import assert_quantlog_inference_policy, maybe_write_trade_r_series_fallback
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.models.trade import Trade, TradeDirection, TradeResult
@@ -27,6 +28,7 @@ from src.quantbuild.research.signal_research_quantlog import (
 )
 from src.quantbuild.strategies.bb_only import (
     STRATEGY_ID,
+    bb_extension_normalized_atr,
     bb_only_strategy_cfg,
     collect_bb_entry_signals,
     compute_bb_bands,
@@ -39,7 +41,10 @@ from src.quantbuild.strategies.bb_only import (
 logger = logging.getLogger(__name__)
 
 
-def _pip_size(symbol: str) -> float:
+def _pip_size(symbol: str, provider: str = "ctrader") -> float:
+    spec = get_symbol_spec(provider, symbol)
+    if spec is not None:
+        return float(spec.pip_size)
     s = symbol.upper()
     if "JPY" in s:
         return 0.01
@@ -53,8 +58,16 @@ def _spread_ok(cfg: Dict[str, Any], symbol: str) -> bool:
     broker = cfg.get("broker") or {}
     mock_spread = float(broker.get("mock_spread", 0.0))
     max_pips = float(guards.get("max_spread_pips", 1.5))
-    spread_pips = mock_spread / _pip_size(symbol) if mock_spread > 0 else 0.0
+    provider = str(broker.get("provider") or "ctrader")
+    spread_pips = mock_spread / _pip_size(symbol, provider=provider) if mock_spread > 0 else 0.0
     return spread_pips <= max_pips
+
+
+def _ensure_consolidated_quantlog_file(ql_emitter: Any) -> None:
+    consolidated_path = getattr(ql_emitter, "consolidated_path", None)
+    if consolidated_path is not None and not consolidated_path.is_file():
+        consolidated_path.parent.mkdir(parents=True, exist_ok=True)
+        consolidated_path.write_text("", encoding="utf-8")
 
 
 def run_bb_only_backtest(
@@ -97,6 +110,9 @@ def run_bb_only_backtest(
         sess_lbl = session_at_signal_label(ts, session_mode)
         trace = str(uuid4())
         if long_raw.iloc[i]:
+            atr_v = float(atr_series.iloc[i]) if pd.notna(atr_series.iloc[i]) else 0.0
+            close_v = float(data["close"].iloc[i])
+            lower_v = float(bands["lower"].iloc[i])
             ql_emitter.emit(
                 event_type="component_observed",
                 trace_id=trace,
@@ -110,9 +126,15 @@ def run_bb_only_backtest(
                     session_at_signal=sess_lbl,
                     regime_at_signal=regime_lbl,
                     bb_lower_break=True,
+                    bb_extension_normalized_atr=bb_extension_normalized_atr(
+                        close_v, lower_v, atr_v, "LONG"
+                    ),
                 ),
             )
         if short_raw.iloc[i]:
+            atr_v = float(atr_series.iloc[i]) if pd.notna(atr_series.iloc[i]) else 0.0
+            close_v = float(data["close"].iloc[i])
+            upper_v = float(bands["upper"].iloc[i])
             ql_emitter.emit(
                 event_type="component_observed",
                 trace_id=str(uuid4()),
@@ -126,6 +148,9 @@ def run_bb_only_backtest(
                     session_at_signal=sess_lbl,
                     regime_at_signal=regime_lbl,
                     bb_upper_break=True,
+                    bb_extension_normalized_atr=bb_extension_normalized_atr(
+                        close_v, upper_v, atr_v, "SHORT"
+                    ),
                 ),
             )
 
@@ -295,6 +320,8 @@ def run_bb_only_backtest(
 
     logger.info("BB-only backtest %s: %d trades", symbol, len(trades))
     maybe_write_trade_r_series_fallback(cfg, trades, trade_order_refs)
+    if ql_emitter:
+        _ensure_consolidated_quantlog_file(ql_emitter)
 
     try:
         from src.quantbuild.integration.quantanalytics_post_run import invoke_quantanalytics_after_quantlog
