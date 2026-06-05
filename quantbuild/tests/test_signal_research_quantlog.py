@@ -116,6 +116,12 @@ def test_emitter_research_events_validate(tmp_path: Path) -> None:
     path = _emit_research_chain(tmp_path)
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert len(lines) == 5
+    component_payload = json.loads(lines[0])["payload"]
+    candidate_payload = json.loads(lines[1])["payload"]
+    assert component_payload["session_at_signal"] == "NEW_YORK"
+    assert component_payload["regime_at_signal"] == "TREND"
+    assert candidate_payload["session_at_signal"] == "NEW_YORK"
+    assert candidate_payload["regime_at_signal"] == "TREND"
     report = validate_path(path)
     errors = [i for i in report.issues if i.level == "error"]
     assert errors == [], [e.message for e in errors]
@@ -125,8 +131,8 @@ def test_component_observed_payload_required_keys() -> None:
     p = build_component_observed_payload(
         component_type="BB_UPPER_BREAK",
         bar_timestamp="2026-01-01T00:00:00Z",
-        session_at_signal="OFF_HOURS",
-        regime_at_signal="UNKNOWN",
+        session_at_signal="LONDON",
+        regime_at_signal="COMPRESSION",
         bb_upper_break=True,
     )
     for key in (
@@ -137,3 +143,21 @@ def test_component_observed_payload_required_keys() -> None:
         "regime_at_signal",
     ):
         assert key in p
+    assert p["session_at_signal"] == "LONDON"
+    assert p["regime_at_signal"] == "COMPRESSION"
+
+
+def test_candidate_signal_payload_preserves_session_and_regime() -> None:
+    p = build_candidate_signal_payload(
+        component_type="MACD_BEAR_CROSS",
+        bar_timestamp="2026-01-01T00:00:00Z",
+        session_at_signal="OVERLAP",
+        regime_at_signal="EXPANSION",
+        direction="SHORT",
+        signal_is_independent=False,
+        macd_cross_bear=True,
+    )
+
+    assert p["session_at_signal"] == "OVERLAP"
+    assert p["regime_at_signal"] == "EXPANSION"
+    assert p["signal_is_independent"] is False
