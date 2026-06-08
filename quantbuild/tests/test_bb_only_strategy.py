@@ -99,6 +99,50 @@ class TestBBMidlineSimulator:
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
 
+    def test_long_exits_on_intrabar_midline_touch_before_close_cross(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 0.90)
+        high = np.full(n, 0.91)
+        low = np.full(n, 0.89)
+        high[6] = 1.01
+        close[6] = 0.95
+        low[8] = 0.79
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.05)
+        res = simulate_bb_midline_trade(
+            df, 5, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=2.0, time_exit_bars=10
+        )
+        assert res["exit_reason"] == "midline"
+        assert res["exit_bar_idx"] == 6
+        assert res["exit_price"] == 1.0
+
+    def test_short_exits_on_intrabar_midline_touch_before_close_cross(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 1.10)
+        high = np.full(n, 1.11)
+        low = np.full(n, 1.09)
+        low[6] = 0.99
+        close[6] = 1.05
+        high[8] = 1.21
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.05)
+        res = simulate_bb_midline_trade(
+            df, 5, "SHORT", mid=mid, atr_arr=atr, sl_atr_mult=2.0, time_exit_bars=10
+        )
+        assert res["exit_reason"] == "midline"
+        assert res["exit_bar_idx"] == 6
+        assert res["exit_price"] == 1.0
+
     def test_sl_before_midline(self):
         n = 30
         dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
