@@ -33,15 +33,32 @@ from src.quantbuild.strategies.macd_only import (
     macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test
 
 
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
+def _jsonl_matches_experiment(path: Path, experiment_id: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if str(event.get("strategy_id") or "") == experiment_id:
+                    return True
+    except (OSError, json.JSONDecodeError):
+        return False
+    return False
+
+
+def _find_latest_run_jsonl(ql_base: Path, experiment_id: str) -> Path | None:
     runs = ql_base / "runs"
     if not runs.is_dir():
         return None
     files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+    for candidate in files:
+        if _jsonl_matches_experiment(candidate, experiment_id):
+            return candidate
+    return None
 
 
 def _forward_return_r(
@@ -171,6 +188,7 @@ def analyze(
     tae_bars: list[int] = []
     velocities: list[float] = []
     signal_indices: list[int] = []
+    signal_directions: list[str] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +197,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -191,20 +208,32 @@ def analyze(
         r8 = _forward_return_r(data, atr_series, i, direction, 8)
         if r8 is not None:
             t8_n += 1
+            signal_indices.append(i)
+            signal_directions.append(direction)
             if r8 > 0:
                 t8_wins += 1
 
     close_arr = data["close"].values.astype(float)
     atr_arr = atr_series.values.astype(float)
     n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
+    long_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    short_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    for i in range(max(0, n_bars - 8)):
         atr_v = atr_arr[i]
         if atr_v <= 0:
             continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
+        long_return = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
+        long_universe_returns[i] = long_return
+        short_universe_returns[i] = -long_return
 
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = directional_permutation_test(
+        long_universe_returns,
+        short_universe_returns,
+        np.array(signal_indices, dtype=int),
+        np.array(signal_directions, dtype=str),
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
@@ -309,9 +338,10 @@ def main() -> int:
     ql_path = args.quantlog
     if ql_path is None:
         cfg = load_config(args.config)
+        experiment_id = str(cfg.get("experiment_id") or "EXP-MACD-MECH-001")
         ql_cfg = cfg.get("quantlog") or {}
         ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
+        ql_path = _find_latest_run_jsonl(ql_base, experiment_id)
 
     analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
     return 0
