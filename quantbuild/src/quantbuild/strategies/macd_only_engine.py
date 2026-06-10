@@ -249,6 +249,10 @@ def run_macd_only_backtest(
                     mae_r=float(result["mae_r"]),
                     direction=direction,
                     outcome=str(result["result"]),
+                    regime=sig["regime_at_signal"].lower(),
+                    regime_at_signal=sig["regime_at_signal"],
+                    session=sig["session_at_signal"].lower(),
+                    session_at_signal=sig["session_at_signal"],
                     **extra,
                 ),
             )
