@@ -117,14 +117,13 @@ def collect_bb_entry_signals(
     atr_series = compute_atr(data, period=14)
     bands = compute_bb_bands(data, bollinger_cfg)
     long_raw, short_raw = detect_bb_component_observations(data, bands)
-    long_ind = apply_independence_to_signals(long_raw, data, atr_series, indep_cfg)
-    short_ind = apply_independence_to_signals(short_raw, data, atr_series, indep_cfg)
+    combined_ind = apply_independence_to_signals(long_raw | short_raw, data, atr_series, indep_cfg)
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
-        if not long_ind.iloc[i] and not short_ind.iloc[i]:
+        if not combined_ind.iloc[i]:
             continue
-        direction = "LONG" if long_ind.iloc[i] else "SHORT"
+        direction = "LONG" if long_raw.iloc[i] else "SHORT"
         component_type = "BB_LOWER_BREAK" if direction == "LONG" else "BB_UPPER_BREAK"
         ts = data.index[i]
         regime_val = None

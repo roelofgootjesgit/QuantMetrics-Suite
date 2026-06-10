@@ -81,14 +81,13 @@ def collect_macd_entry_signals(
     atr_series = compute_atr(data, period=14)
 
     bull_raw, bear_raw = detect_macd_component_observations(macd_frame)
-    bull_ind = apply_independence_to_signals(bull_raw, data, atr_series, indep_cfg)
-    bear_ind = apply_independence_to_signals(bear_raw, data, atr_series, indep_cfg)
+    combined_ind = apply_independence_to_signals(bull_raw | bear_raw, data, atr_series, indep_cfg)
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
-        if not bull_ind.iloc[i] and not bear_ind.iloc[i]:
+        if not combined_ind.iloc[i]:
             continue
-        direction = "LONG" if bull_ind.iloc[i] else "SHORT"
+        direction = "LONG" if bull_raw.iloc[i] else "SHORT"
         component_type = "MACD_BULL_CROSS" if direction == "LONG" else "MACD_BEAR_CROSS"
         ts = data.index[i]
         regime_val = (
