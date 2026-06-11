@@ -39,6 +39,31 @@ from src.quantbuild.strategies.bb_only import (
 logger = logging.getLogger(__name__)
 
 
+def _emit_research_no_action(
+    ql_emitter: Any,
+    *,
+    prefix: str,
+    entry_ts: Any,
+    account_id: str,
+    strategy_id: str,
+    symbol: str,
+    reason: str,
+    trace_id: str,
+    decision_cycle_id: str,
+) -> None:
+    eff = canonical_no_action_reason(reason)
+    ql_emitter.emit(
+        event_type="trade_action",
+        trace_id=trace_id,
+        timestamp_utc=_bar_timestamp_utc_iso(entry_ts),
+        account_id=account_id,
+        strategy_id=strategy_id,
+        symbol=symbol,
+        decision_cycle_id=decision_cycle_id or new_decision_cycle_id(prefix=prefix),
+        payload={"decision": "NO_ACTION", "reason": eff},
+    )
+
+
 def _pip_size(symbol: str) -> float:
     s = symbol.upper()
     if "JPY" in s:
@@ -141,30 +166,7 @@ def run_bb_only_backtest(
 
     for sig in entry_signals:
         i = int(sig["bar_index"])
-        if i <= open_until_bar and max_concurrent <= 1:
-            continue
-
         entry_ts = data.index[i]
-        trade_date = entry_ts.date()
-        if daily_pnl_r.get(trade_date, 0.0) <= -max_daily_loss_r:
-            continue
-
-        if not _spread_ok(cfg, symbol):
-            if ql_emitter:
-                dcid = new_decision_cycle_id(prefix="dc_bb")
-                eff = canonical_no_action_reason("spread_block")
-                ql_emitter.emit(
-                    event_type="trade_action",
-                    trace_id=str(uuid4()),
-                    timestamp_utc=_bar_timestamp_utc_iso(entry_ts),
-                    account_id=account_id,
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    decision_cycle_id=dcid,
-                    payload={"decision": "NO_ACTION", "reason": eff},
-                )
-            continue
-
         direction = sig["direction"]
         ts_iso = _bar_timestamp_utc_iso(entry_ts)
         trace_id = str(uuid4())
@@ -180,6 +182,7 @@ def run_bb_only_backtest(
                 strategy_id=strategy_id,
                 symbol=symbol,
                 payload=build_candidate_signal_payload(
+                    signal_id=trade_ref,
                     component_type=sig["component_type"],
                     bar_timestamp=ts_iso,
                     session_at_signal=sig["session_at_signal"],
@@ -216,6 +219,54 @@ def run_bb_only_backtest(
                     "signal_is_independent": True,
                 },
             )
+
+        if i <= open_until_bar and max_concurrent <= 1:
+            if ql_emitter:
+                _emit_research_no_action(
+                    ql_emitter,
+                    prefix="dc_bb",
+                    entry_ts=entry_ts,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    reason="position_limit_block",
+                    trace_id=trace_id,
+                    decision_cycle_id=decision_cycle_id,
+                )
+            continue
+
+        trade_date = entry_ts.date()
+        if daily_pnl_r.get(trade_date, 0.0) <= -max_daily_loss_r:
+            if ql_emitter:
+                _emit_research_no_action(
+                    ql_emitter,
+                    prefix="dc_bb",
+                    entry_ts=entry_ts,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    reason="daily_loss_block",
+                    trace_id=trace_id,
+                    decision_cycle_id=decision_cycle_id,
+                )
+            continue
+
+        if not _spread_ok(cfg, symbol):
+            if ql_emitter:
+                _emit_research_no_action(
+                    ql_emitter,
+                    prefix="dc_bb",
+                    entry_ts=entry_ts,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    reason="spread_block",
+                    trace_id=trace_id,
+                    decision_cycle_id=decision_cycle_id,
+                )
+            continue
+
+        if ql_emitter:
             ql_emitter.emit(
                 event_type="trade_action",
                 trace_id=trace_id,
@@ -268,6 +319,8 @@ def run_bb_only_backtest(
                     mae_r=float(result["mae_r"]),
                     direction=direction,
                     outcome=str(result["result"]),
+                    regime=sig["regime_at_signal"].lower(),
+                    session=session_from_timestamp(entry_ts, mode=session_mode),
                 ),
             )
 
