@@ -1,8 +1,11 @@
 """Tests for MACD-only strategy (EXP-MACD-MECH-001)."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
@@ -78,3 +81,70 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+
+class TestMacdOnlyBacktestEngine:
+    def test_quantlog_candidate_signal_kept_for_overlapping_signal(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.quantbuild.strategies import macd_only_engine
+
+        df = _ohlc(40)
+
+        def fake_collect_macd_entry_signals(*args, **kwargs):
+            return [
+                {
+                    "bar_index": 5,
+                    "direction": "LONG",
+                    "component_type": "MACD_BULL_CROSS",
+                    "bar_timestamp": df.index[5],
+                    "session_at_signal": "OFF_HOURS",
+                    "regime_at_signal": "UNKNOWN",
+                    "macd_cross_bull": True,
+                    "macd_cross_bear": False,
+                    "macd_cross_velocity": 0.01,
+                },
+                {
+                    "bar_index": 6,
+                    "direction": "SHORT",
+                    "component_type": "MACD_BEAR_CROSS",
+                    "bar_timestamp": df.index[6],
+                    "session_at_signal": "OFF_HOURS",
+                    "regime_at_signal": "UNKNOWN",
+                    "macd_cross_bull": False,
+                    "macd_cross_bear": True,
+                    "macd_cross_velocity": -0.01,
+                },
+            ]
+
+        monkeypatch.setattr(
+            macd_only_engine,
+            "collect_macd_entry_signals",
+            fake_collect_macd_entry_signals,
+        )
+        ql_file = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.0001},
+            "strategy": {"macd": {"fast": 5, "slow": 10, "signal": 3}},
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 10.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+
+        trades = macd_only_engine.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        events = [
+            json.loads(line)
+            for line in ql_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert sum(1 for ev in events if ev["event_type"] == "candidate_signal") == 2
+        assert sum(1 for ev in events if ev["event_type"] == "trade_closed") == len(trades) == 1
