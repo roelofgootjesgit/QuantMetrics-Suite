@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -147,3 +149,70 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_quantlog_candidate_signal_kept_for_overlapping_signal(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.quantbuild.strategies import bb_only_engine
+
+        df = _trend_down_through_bands(60)
+
+        def fake_collect_bb_entry_signals(*args, **kwargs):
+            return [
+                {
+                    "bar_index": 25,
+                    "direction": "LONG",
+                    "component_type": "BB_LOWER_BREAK",
+                    "bar_timestamp": df.index[25],
+                    "session_at_signal": "OFF_HOURS",
+                    "regime_at_signal": "UNKNOWN",
+                    "bb_lower_break": True,
+                    "bb_upper_break": False,
+                    "bb_extension_normalized_atr": 1.0,
+                    "bands_mid": 1.0,
+                },
+                {
+                    "bar_index": 26,
+                    "direction": "SHORT",
+                    "component_type": "BB_UPPER_BREAK",
+                    "bar_timestamp": df.index[26],
+                    "session_at_signal": "OFF_HOURS",
+                    "regime_at_signal": "UNKNOWN",
+                    "bb_lower_break": False,
+                    "bb_upper_break": True,
+                    "bb_extension_normalized_atr": 1.0,
+                    "bands_mid": 1.0,
+                },
+            ]
+
+        monkeypatch.setattr(
+            bb_only_engine,
+            "collect_bb_entry_signals",
+            fake_collect_bb_entry_signals,
+        )
+        ql_file = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.0001},
+            "strategy": {"bollinger": {"length": 20, "stddev": 2.0}},
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 10.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+
+        trades = bb_only_engine.run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        events = [
+            json.loads(line)
+            for line in ql_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert sum(1 for ev in events if ev["event_type"] == "candidate_signal") == 2
+        assert sum(1 for ev in events if ev["event_type"] == "trade_closed") == len(trades) == 1
