@@ -67,6 +67,15 @@ def test_write_and_roundtrip_no_nan(tmp_path: Path):
     json.dumps(data, allow_nan=False)  # must not raise
 
 
+def test_write_report_sanitizes_run_id_filename(tmp_path: Path):
+    rep = build_mfe_timing_report([], run_id="../evil", experiment_id="e", jsonl_paths=[])
+    p = write_mfe_timing_report(rep, output_dir=tmp_path, run_id="../evil")
+
+    assert p.parent == tmp_path
+    assert p.name == "evil_mfe_timing_report.json"
+    assert not (tmp_path.parent / "evil_mfe_timing_report.json").exists()
+
+
 def test_run_mfe_timing_for_events_resolves_run_id(tmp_path: Path):
     events = [_ev("qb_x", "TP", 1.1, 2), _ev("qb_x", "TP", 1.2, 8)]
     path, rep = run_mfe_timing_for_events(

@@ -18,6 +18,12 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _safe_run_id_filename_part(run_id: str, *, max_len: int = 120) -> str:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(run_id).strip())
+    safe = safe.strip("_")[:max_len].strip("_")
+    return safe or "run"
+
+
 def _extract_tp_rows(events: list[dict[str, Any]], run_id: str) -> list[dict[str, Any]]:
     """Rows from ``trade_closed`` with TP exit only."""
     rid = str(run_id).strip()
@@ -157,7 +163,7 @@ def build_mfe_timing_report(
 def write_mfe_timing_report(report: dict[str, Any], *, output_dir: Path, run_id: str) -> Path:
     """Write ``{run_id}_mfe_timing_report.json`` under ``output_dir``."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{run_id}_mfe_timing_report.json"
+    path = output_dir / f"{_safe_run_id_filename_part(run_id)}_mfe_timing_report.json"
     path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return path
 
