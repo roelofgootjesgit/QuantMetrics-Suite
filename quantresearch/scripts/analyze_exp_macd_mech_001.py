@@ -33,7 +33,6 @@ from src.quantbuild.strategies.macd_only import (
     macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
 
 
 def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
@@ -62,6 +61,90 @@ def _forward_return_r(
     risk = 2.0 * atr_v
     move = exit_p - entry if direction == "LONG" else entry - exit_p
     return move / risk
+
+
+def _directional_forward_return_universes(
+    close_arr: np.ndarray,
+    atr_arr: np.ndarray,
+    *,
+    horizon: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    n_bars = len(close_arr)
+    long_returns = np.zeros(n_bars, dtype=float)
+    short_returns = np.zeros(n_bars, dtype=float)
+    for i in range(n_bars - horizon):
+        atr_v = float(atr_arr[i])
+        if atr_v <= 0 or not np.isfinite(atr_v):
+            continue
+        risk = 2.0 * atr_v
+        move = float(close_arr[i + horizon]) - float(close_arr[i])
+        long_returns[i] = move / risk
+        short_returns[i] = -move / risk
+    return long_returns, short_returns
+
+
+def _direction_preserving_permutation_test(
+    long_outcomes: np.ndarray,
+    short_outcomes: np.ndarray,
+    signal_indices: np.ndarray,
+    signal_directions: list[str],
+    *,
+    n_permutations: int = 1000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    """Permutation test that preserves the observed LONG/SHORT signal mix."""
+    long_out = np.asarray(long_outcomes, dtype=float)
+    short_out = np.asarray(short_outcomes, dtype=float)
+    sig_idx = np.asarray(signal_indices, dtype=int)
+    directions = np.asarray([str(d).upper() for d in signal_directions])
+    if long_out.ndim != 1 or short_out.ndim != 1:
+        raise ValueError("outcomes must be 1-D")
+    if len(long_out) != len(short_out):
+        raise ValueError("long_outcomes and short_outcomes must have the same length")
+    if sig_idx.ndim != 1:
+        raise ValueError("signal_indices must be 1-D")
+    if len(sig_idx) != len(directions):
+        raise ValueError("signal_indices and signal_directions must have the same length")
+    n_bars = len(long_out)
+    if n_bars == 0:
+        raise ValueError("outcomes must not be empty")
+    if len(sig_idx) == 0:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+        }
+    if (sig_idx < 0).any() or (sig_idx >= n_bars).any():
+        raise ValueError("signal_indices out of range")
+    if not np.isin(directions, ["LONG", "SHORT"]).all():
+        raise ValueError("signal_directions must contain only LONG or SHORT")
+
+    is_long = directions == "LONG"
+    observed_values = np.where(is_long, long_out[sig_idx], short_out[sig_idx])
+    observed = float(np.mean(observed_values))
+    rng = np.random.default_rng(seed)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    n_signals = len(sig_idx)
+    for i in range(n_permutations):
+        random_idx = rng.choice(n_bars, size=n_signals, replace=False)
+        perm_values = np.where(is_long, long_out[random_idx], short_out[random_idx])
+        perm_rates[i] = float(np.mean(perm_values))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed))
+    return {
+        "observed_hit_rate": observed,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": n_signals,
+        "n_permutations": n_permutations,
+        "seed": seed,
+    }
 
 
 def _time_to_adverse_excursion(
@@ -171,6 +254,7 @@ def analyze(
     tae_bars: list[int] = []
     velocities: list[float] = []
     signal_indices: list[int] = []
+    signal_directions: list[str] = []
     t8_wins = 0
     t8_n = 0
 
@@ -180,6 +264,7 @@ def analyze(
         i = int(sig["bar_index"])
         direction = sig["direction"]
         signal_indices.append(i)
+        signal_directions.append(direction)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -196,15 +281,19 @@ def analyze(
 
     close_arr = data["close"].values.astype(float)
     atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    long_universe_returns, short_universe_returns = _directional_forward_return_universes(
+        close_arr,
+        atr_arr,
+        horizon=8,
+    )
+    perm = _direction_preserving_permutation_test(
+        long_universe_returns,
+        short_universe_returns,
+        np.array(signal_indices, dtype=int),
+        signal_directions,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
