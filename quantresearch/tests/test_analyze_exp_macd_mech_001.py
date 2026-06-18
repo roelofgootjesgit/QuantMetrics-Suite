@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 
-from scripts.analyze_exp_macd_mech_001 import (
-    _direction_preserving_permutation_test,
-    _directional_forward_return_universes,
-)
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "analyze_exp_macd_mech_001.py"
+_SPEC = importlib.util.spec_from_file_location("analyze_exp_macd_mech_001", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+
+_direction_preserving_permutation_test = _MODULE._direction_preserving_permutation_test
+_directional_forward_return_universes = _MODULE._directional_forward_return_universes
 
 
 def test_permutation_observed_score_preserves_signal_direction() -> None:
