@@ -18,6 +18,12 @@ from src.quantbuild.quantlog_repo import quantbuild_project_root
 logger = logging.getLogger(__name__)
 
 
+def _quantlog_consolidated_source(ql_emitter: QuantLogEmitter) -> Path:
+    if ql_emitter.consolidated_path is not None:
+        return ql_emitter.consolidated_path.resolve()
+    return (ql_emitter.base_path / "runs" / f"{ql_emitter.run_id}.jsonl").resolve()
+
+
 def _sanitize_segment(name: str) -> str:
     s = "".join(c if c.isalnum() or c in "-_" else "_" for c in name.strip())
     return s or "unnamed"
@@ -67,7 +73,7 @@ def invoke_quantresearch_run_bundle(
     dest.mkdir(parents=True, exist_ok=True)
 
     qb_root = quantbuild_project_root()
-    jsonl_src = qb_root / "data" / "quantlog_events" / "runs" / f"{ql_emitter.run_id}.jsonl"
+    jsonl_src = _quantlog_consolidated_source(ql_emitter)
     if jsonl_src.is_file():
         shutil.copy2(jsonl_src, dest / "quantlog_events.jsonl")
     else:
