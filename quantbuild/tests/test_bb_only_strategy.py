@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.quantbuild.strategies import bb_only as bb_only_module
 from src.quantbuild.strategies.bb_only import (
     apply_independence_to_signals,
     collect_bb_entry_signals,
@@ -72,6 +73,34 @@ class TestBBOnlySignals:
         for a, b in zip(indices, indices[1:]):
             assert b - a >= 4
 
+    def test_collect_entries_filters_adjacent_opposite_direction_signals(self, monkeypatch):
+        df = _eurusd_df(8)
+        df["close"] = 10.0
+        bands = pd.DataFrame(
+            {
+                "lower": [0.0, 0.0, 11.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                "mid": [10.0] * 8,
+                "upper": [99.0, 99.0, 99.0, 9.0, 99.0, 99.0, 99.0, 99.0],
+            },
+            index=df.index,
+        )
+        monkeypatch.setattr(
+            bb_only_module,
+            "compute_atr",
+            lambda data, period=14: pd.Series(1.0, index=data.index),
+        )
+        monkeypatch.setattr(bb_only_module, "compute_bb_bands", lambda data, cfg: bands)
+
+        entries = collect_bb_entry_signals(
+            df,
+            {
+                "bollinger": {"length": 20, "stddev": 2.0},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+            },
+        )
+
+        assert [(e["bar_index"], e["direction"]) for e in entries] == [(2, "LONG")]
+
 
 class TestBBMidlineSimulator:
     def test_long_hits_midline(self):
@@ -116,6 +145,42 @@ class TestBBMidlineSimulator:
         )
         assert res["exit_reason"] == "sl"
         assert res["hit_midline_before_sl"] is False
+
+    def test_intrabar_wick_touch_exits_at_midline(self):
+        n = 12
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        mid = np.full(n, 1.0)
+        atr = np.full(n, 0.01)
+
+        close = np.full(n, 0.95)
+        high = close + 0.001
+        low = close - 0.001
+        high[6] = 1.001
+        close[6] = 0.96
+        long_df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        long_res = simulate_bb_midline_trade(
+            long_df, 5, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=4
+        )
+        assert long_res["exit_reason"] == "midline"
+        assert long_res["exit_bar_idx"] == 6
+
+        close = np.full(n, 1.05)
+        high = close + 0.001
+        low = close - 0.001
+        low[6] = 0.999
+        close[6] = 1.04
+        short_df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        short_res = simulate_bb_midline_trade(
+            short_df, 5, "SHORT", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=4
+        )
+        assert short_res["exit_reason"] == "midline"
+        assert short_res["exit_bar_idx"] == 6
 
 
 class TestBBOnlyBacktestEngine:
