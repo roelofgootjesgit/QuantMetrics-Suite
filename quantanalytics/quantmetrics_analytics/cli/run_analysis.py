@@ -380,6 +380,7 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
         reports = _parse_reports(args.reports)
     except ValueError as exc:
         parser.error(str(exc))
+    reports_requested_all = str(args.reports).strip().lower() == "all"
 
     if getattr(args, "stdout", False) and getattr(args, "output", None) is not None:
         parser.error("Choose either --stdout or --output/-o, not both.")
@@ -459,6 +460,7 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
     mfe_timing_meta: str = ""
     if "mfe_timing" in reports:
         from quantmetrics_analytics.analysis.mfe_timing import (
+            MfeTimingRunIdError,
             format_mfe_timing_text_summary,
             run_mfe_timing_for_events,
         )
@@ -471,11 +473,18 @@ def run(stdout=sys.stdout, argv: list[str] | None = None) -> int:
                 experiment_id=str(getattr(args, "experiment_id", "") or "").strip() or "unknown",
                 output_dir=_output_rapport_dir(),
             )
+        except MfeTimingRunIdError as exc:
+            if reports_requested_all:
+                print(f"MFE timing report skipped: {exc}", file=sys.stderr)
+            else:
+                print(f"MFE timing report failed: {exc}", file=sys.stderr)
+                return 5
         except Exception as exc:
             print(f"MFE timing report failed: {exc}", file=sys.stderr)
             return 5
-        mfe_timing_meta = format_mfe_timing_text_summary(mfe_timing_report_obj)
-        print(f"MFE timing report written: {mfe_timing_path}", file=sys.stderr)
+        else:
+            mfe_timing_meta = format_mfe_timing_text_summary(mfe_timing_report_obj)
+            print(f"MFE timing report written: {mfe_timing_path}", file=sys.stderr)
 
     tp_headroom_path: Path | None = None
     tp_headroom_report_obj: dict | None = None
