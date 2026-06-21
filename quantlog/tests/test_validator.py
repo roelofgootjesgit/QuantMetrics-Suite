@@ -13,6 +13,26 @@ from quantlog.validate.validator import (
 )
 
 
+def _valid_trade_action_event() -> dict[str, object]:
+    return {
+        "event_id": "00000000-0000-0000-0000-000000000050",
+        "event_type": "trade_action",
+        "event_version": 1,
+        "timestamp_utc": "2026-03-29T18:00:03Z",
+        "ingested_at_utc": "2026-03-29T18:00:03Z",
+        "source_system": "quantbuild",
+        "source_component": "decision_engine",
+        "environment": "paper",
+        "run_id": "run_validation_regression",
+        "session_id": "session_validation_regression",
+        "source_seq": 1,
+        "trace_id": "trace_validation_regression",
+        "decision_cycle_id": "dc_validation_regression",
+        "severity": "info",
+        "payload": {"decision": "NO_ACTION", "reason": "no_setup"},
+    }
+
+
 class TestValidator(unittest.TestCase):
     def test_validation_issue_code_and_aggregate(self) -> None:
         self.assertEqual(
@@ -62,6 +82,49 @@ class TestValidator(unittest.TestCase):
             self.assertEqual(report.files_scanned, 1)
             self.assertEqual(report.lines_scanned, 1)
             self.assertIn("missing_payload_field[trade_action]: reason", error_messages)
+
+    def test_validate_path_reports_invalid_timestamp_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = _valid_trade_action_event()
+            event["timestamp_utc"] = "not-a-date"
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+
+            self.assertEqual(report.lines_scanned, 1)
+            self.assertIn("invalid_timestamp_utc", error_messages)
+            self.assertEqual(report.events_valid, 0)
+
+    def test_payload_null_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = _valid_trade_action_event()
+            event["payload"] = None
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+
+            self.assertIn("payload_not_object", error_messages)
+            self.assertEqual(report.events_valid, 0)
+
+    def test_required_payload_field_null_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = _valid_trade_action_event()
+            event["payload"] = {"decision": "NO_ACTION", "reason": None}
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+
+            self.assertIn("null_payload_field[trade_action]: reason", error_messages)
+            self.assertEqual(report.events_valid, 0)
 
     def test_validate_path_accepts_valid_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

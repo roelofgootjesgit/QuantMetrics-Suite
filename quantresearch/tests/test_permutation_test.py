@@ -1,7 +1,8 @@
 """Tests for signal timestamp permutation test."""
+import pytest
 import numpy as np
 
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test, permutation_test
 
 
 def test_seed_reproducible() -> None:
@@ -42,3 +43,36 @@ def test_empty_signals_returns_neutral() -> None:
     assert result["n_signals"] == 0
     assert result["p_value"] == 1.0
     assert not result["significant"]
+
+
+def test_directional_permutation_uses_short_side_outcomes() -> None:
+    long_outcomes = np.zeros(40, dtype=float)
+    short_outcomes = np.zeros(40, dtype=float)
+    long_outcomes[10] = -1.0
+    short_outcomes[10] = 1.0
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        np.array([10]),
+        np.array(["SHORT"]),
+        n_permutations=100,
+        seed=7,
+    )
+
+    assert result["observed_hit_rate"] == 1.0
+    assert result["n_signals"] == 1
+
+
+def test_directional_permutation_rejects_unknown_direction() -> None:
+    outcomes = np.zeros(10, dtype=float)
+
+    with pytest.raises(ValueError, match="unsupported signal direction"):
+        directional_permutation_test(
+            outcomes,
+            outcomes,
+            np.array([2]),
+            np.array(["FLAT"]),
+            n_permutations=10,
+            seed=1,
+        )

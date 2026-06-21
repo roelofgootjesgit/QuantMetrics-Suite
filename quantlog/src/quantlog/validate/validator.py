@@ -337,26 +337,37 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
 
-    if "timestamp_utc" in event and not _is_utc_iso8601(event["timestamp_utc"]):
-        issues.append(
-            ValidationIssue(
-                level="error",
-                path=raw_line.path,
-                line_number=raw_line.line_number,
-                message="invalid_timestamp_utc",
+    timestamp_valid = True
+    if "timestamp_utc" in event:
+        timestamp_valid = _is_utc_iso8601(event["timestamp_utc"])
+        if not timestamp_valid:
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    path=raw_line.path,
+                    line_number=raw_line.line_number,
+                    message="invalid_timestamp_utc",
+                )
             )
-        )
 
-    if "ingested_at_utc" in event and not _is_utc_iso8601(event["ingested_at_utc"]):
-        issues.append(
-            ValidationIssue(
-                level="error",
-                path=raw_line.path,
-                line_number=raw_line.line_number,
-                message="invalid_ingested_at_utc",
+    ingested_valid = True
+    if "ingested_at_utc" in event:
+        ingested_valid = _is_utc_iso8601(event["ingested_at_utc"])
+        if not ingested_valid:
+            issues.append(
+                ValidationIssue(
+                    level="error",
+                    path=raw_line.path,
+                    line_number=raw_line.line_number,
+                    message="invalid_ingested_at_utc",
+                )
             )
-        )
-    elif "timestamp_utc" in event and "ingested_at_utc" in event:
+    if (
+        "timestamp_utc" in event
+        and "ingested_at_utc" in event
+        and timestamp_valid
+        and ingested_valid
+    ):
         ts_dt = datetime.fromisoformat(str(event["timestamp_utc"]).replace("Z", "+00:00"))
         ingest_dt = datetime.fromisoformat(str(event["ingested_at_utc"]).replace("Z", "+00:00"))
         if ingest_dt < ts_dt:
@@ -443,7 +454,7 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
 
     payload = event.get("payload")
-    if payload is not None and not isinstance(payload, dict):
+    if "payload" in event and not isinstance(payload, dict):
         issues.append(
             ValidationIssue(
                 level="error",
@@ -475,6 +486,16 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
                     line_number=raw_line.line_number,
                     message=f"missing_payload_field[{event_type}]: {field_name}",
                 )
+                )
+        for field_name in sorted(required_payload & set(payload.keys())):
+            if payload[field_name] is None:
+                issues.append(
+                    ValidationIssue(
+                        level="error",
+                        path=raw_line.path,
+                        line_number=raw_line.line_number,
+                        message=f"null_payload_field[{event_type}]: {field_name}",
+                    )
                 )
 
     if isinstance(payload, dict):
