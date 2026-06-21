@@ -203,19 +203,18 @@ def simulate_bb_midline_trade(
     for j in range(entry_i + 1, end_j + 1):
         lo, hi = float(low_arr[j]), float(high_arr[j])
         mid_v = float(mid[j])
-        if not np.isfinite(mid_v):
-            continue
+        mid_valid = np.isfinite(mid_v)
 
         if direction == "LONG":
             favorable = hi - entry_price
             adverse = entry_price - lo
             sl_hit = lo <= sl
-            mid_hit = close_arr[j] >= mid_v
+            mid_hit = mid_valid and hi >= mid_v
         else:
             favorable = entry_price - lo
             adverse = hi - entry_price
             sl_hit = hi >= sl
-            mid_hit = close_arr[j] <= mid_v
+            mid_hit = mid_valid and lo <= mid_v
 
         max_favorable = max(max_favorable, favorable)
         max_adverse = max(max_adverse, adverse)

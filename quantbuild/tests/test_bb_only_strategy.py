@@ -99,6 +99,48 @@ class TestBBMidlineSimulator:
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
 
+    def test_long_wick_touch_hits_midline_before_close_cross(self):
+        n = 30
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 0.95)
+        high = np.full(n, 0.951)
+        low = np.full(n, 0.949)
+        high[11] = 1.002
+        close[11] = 0.96
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=10
+        )
+        assert res["exit_reason"] == "midline"
+        assert res["exit_price"] == pytest.approx(1.0)
+        assert res["bars_to_midline"] == 1
+
+    def test_short_wick_touch_hits_midline_before_close_cross(self):
+        n = 30
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 1.05)
+        high = np.full(n, 1.051)
+        low = np.full(n, 1.049)
+        low[11] = 0.998
+        close[11] = 1.04
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+        res = simulate_bb_midline_trade(
+            df, 10, "SHORT", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=10
+        )
+        assert res["exit_reason"] == "midline"
+        assert res["exit_price"] == pytest.approx(1.0)
+        assert res["bars_to_midline"] == 1
+
     def test_sl_before_midline(self):
         n = 30
         dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
@@ -116,6 +158,24 @@ class TestBBMidlineSimulator:
         )
         assert res["exit_reason"] == "sl"
         assert res["hit_midline_before_sl"] is False
+
+    def test_sl_is_checked_when_midline_is_nan(self):
+        n = 30
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 1.0)
+        low = np.full(n, 0.999)
+        high = np.full(n, 1.001)
+        low[11] = 0.97
+        mid = np.full(n, np.nan)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=2.0, time_exit_bars=10
+        )
+        assert res["exit_reason"] == "sl"
 
 
 class TestBBOnlyBacktestEngine:
