@@ -25,8 +25,14 @@ def test_quantbuild_can_build_decision_payload() -> None:
     assert payload["decision_cycle_id"] == "dc_demo_test"
 
 
-def test_quantmetrics_os_finds_run_artifacts() -> None:
-    root = Path(__file__).resolve().parents[1]
-    qmos_root = root / "quantmetrics_os"
+def test_quantmetrics_os_finds_run_artifacts(tmp_path: Path) -> None:
+    qmos_root = tmp_path
+    run_dir = qmos_root / "runs" / "EXP-SMOKE" / "baseline"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_info.json").write_text('{"run_id": "run_smoke"}\n', encoding="utf-8")
+
     rows = _scan_runs(runs_root=qmos_root / "runs", qmos_root=qmos_root)
-    assert rows, "Expected at least one run artifact folder under quantmetrics_os/runs"
+    assert len(rows) == 1
+    assert rows[0].experiment == "EXP-SMOKE"
+    assert rows[0].role == "baseline"
+    assert rows[0].run_id == "run_smoke"
