@@ -47,7 +47,7 @@ def _pip_size(symbol: str) -> float:
 
 
 def _spread_ok(cfg: Dict[str, Any], symbol: str) -> bool:
-    guards = (cfg.get("guards") or {}).get("spread") or {}
+    guards = (bb_only_strategy_cfg(cfg).get("guards") or {}).get("spread") or {}
     if not bool(guards.get("enabled", False)):
         return True
     broker = cfg.get("broker") or {}

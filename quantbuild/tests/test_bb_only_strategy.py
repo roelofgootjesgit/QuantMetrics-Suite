@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.quantbuild.strategies import bb_only as bb_mod
 from src.quantbuild.strategies.bb_only import (
     apply_independence_to_signals,
     collect_bb_entry_signals,
@@ -72,6 +73,27 @@ class TestBBOnlySignals:
         for a, b in zip(indices, indices[1:]):
             assert b - a >= 4
 
+    def test_collect_entries_filters_opposite_direction_cluster(self, monkeypatch):
+        df = _eurusd_df(8)
+        long_raw = pd.Series([False, True, False, False, False, False, False, False], index=df.index)
+        short_raw = pd.Series([False, False, True, False, False, False, False, False], index=df.index)
+        atr = pd.Series([0.01] * len(df), index=df.index)
+        bands = pd.DataFrame(
+            {"lower": [0.99] * len(df), "mid": [1.0] * len(df), "upper": [1.01] * len(df)},
+            index=df.index,
+        )
+        monkeypatch.setattr(bb_mod, "compute_atr", lambda data, period=14: atr)
+        monkeypatch.setattr(bb_mod, "compute_bb_bands", lambda data, bollinger_cfg: bands)
+        monkeypatch.setattr(
+            bb_mod, "detect_bb_component_observations", lambda data, bands: (long_raw, short_raw)
+        )
+
+        entries = bb_mod.collect_bb_entry_signals(
+            df, {"signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0}}
+        )
+
+        assert [e["bar_index"] for e in entries] == [1]
+
 
 class TestBBMidlineSimulator:
     def test_long_hits_midline(self):
@@ -99,6 +121,27 @@ class TestBBMidlineSimulator:
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
 
+    def test_long_hits_midline_on_intrabar_wick(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 0.95)
+        high = close + 0.001
+        low = close - 0.001
+        high[11] = 1.001
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=5
+        )
+
+        assert res["exit_reason"] == "midline"
+        assert res["bars_to_midline"] == 1
+
     def test_sl_before_midline(self):
         n = 30
         dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
@@ -119,6 +162,16 @@ class TestBBMidlineSimulator:
 
 
 class TestBBOnlyBacktestEngine:
+    def test_spread_guard_uses_nested_strategy_guards(self):
+        from src.quantbuild.strategies.bb_only_engine import _spread_ok
+
+        cfg = {
+            "broker": {"mock_spread": 0.0002},
+            "strategy": {"guards": {"spread": {"enabled": True, "max_spread_pips": 1.0}}},
+        }
+
+        assert _spread_ok(cfg, "EURUSD") is False
+
     def test_run_on_synthetic_data(self, tmp_path):
         from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
 
