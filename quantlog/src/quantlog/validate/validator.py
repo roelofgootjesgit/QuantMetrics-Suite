@@ -337,7 +337,10 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
 
-    if "timestamp_utc" in event and not _is_utc_iso8601(event["timestamp_utc"]):
+    timestamp_valid = "timestamp_utc" in event and _is_utc_iso8601(event["timestamp_utc"])
+    ingested_at_valid = "ingested_at_utc" in event and _is_utc_iso8601(event["ingested_at_utc"])
+
+    if "timestamp_utc" in event and not timestamp_valid:
         issues.append(
             ValidationIssue(
                 level="error",
@@ -347,7 +350,7 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
 
-    if "ingested_at_utc" in event and not _is_utc_iso8601(event["ingested_at_utc"]):
+    if "ingested_at_utc" in event and not ingested_at_valid:
         issues.append(
             ValidationIssue(
                 level="error",
@@ -356,7 +359,7 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
                 message="invalid_ingested_at_utc",
             )
         )
-    elif "timestamp_utc" in event and "ingested_at_utc" in event:
+    elif timestamp_valid and ingested_at_valid:
         ts_dt = datetime.fromisoformat(str(event["timestamp_utc"]).replace("Z", "+00:00"))
         ingest_dt = datetime.fromisoformat(str(event["ingested_at_utc"]).replace("Z", "+00:00"))
         if ingest_dt < ts_dt:
@@ -442,8 +445,9 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
                 )
             )
 
+    payload_present = "payload" in event
     payload = event.get("payload")
-    if payload is not None and not isinstance(payload, dict):
+    if payload_present and not isinstance(payload, dict):
         issues.append(
             ValidationIssue(
                 level="error",
@@ -466,7 +470,11 @@ def validate_raw_event(raw_line: RawEventLine) -> list[ValidationIssue]:
             )
         )
     elif isinstance(payload, dict):
-        missing_payload_fields = required_payload - set(payload.keys())
+        missing_payload_fields = {
+            field_name
+            for field_name in required_payload
+            if field_name not in payload or payload[field_name] is None
+        }
         for field_name in sorted(missing_payload_fields):
             issues.append(
                 ValidationIssue(
