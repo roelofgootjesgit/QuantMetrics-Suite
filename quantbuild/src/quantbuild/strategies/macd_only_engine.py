@@ -30,6 +30,7 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     compute_macd_frame,
     detect_macd_component_observations,
+    macd_cross_velocity,
     macd_only_strategy_cfg,
     simulate_macd_time_exit_trade,
 )
@@ -84,7 +85,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bull=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=macd_cross_velocity(macd_frame, i),
                     ),
                 )
             if bear_raw.iloc[i]:
@@ -101,7 +102,7 @@ def run_macd_only_backtest(
                         session_at_signal=sess_lbl,
                         regime_at_signal=regime_lbl,
                         macd_cross_bear=True,
-                        macd_cross_velocity=float(macd_frame["histogram"].iloc[i]),
+                        macd_cross_velocity=macd_cross_velocity(macd_frame, i),
                     ),
                 )
 
@@ -122,30 +123,7 @@ def run_macd_only_backtest(
 
     for sig in entry_signals:
         i = int(sig["bar_index"])
-        if i <= open_until_bar and max_concurrent <= 1:
-            continue
-
         entry_ts = data.index[i]
-        trade_date = entry_ts.date()
-        if daily_pnl_r.get(trade_date, 0.0) <= -max_daily_loss_r:
-            continue
-
-        if not _spread_ok(cfg, symbol):
-            if ql_emitter:
-                dcid = new_decision_cycle_id(prefix="dc_macd")
-                eff = canonical_no_action_reason("spread_block")
-                ql_emitter.emit(
-                    event_type="trade_action",
-                    trace_id=str(uuid4()),
-                    timestamp_utc=_bar_timestamp_utc_iso(entry_ts),
-                    account_id=account_id,
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    decision_cycle_id=dcid,
-                    payload={"decision": "NO_ACTION", "reason": eff},
-                )
-            continue
-
         direction = sig["direction"]
         ts_iso = _bar_timestamp_utc_iso(entry_ts)
         trace_id = str(uuid4())
@@ -161,6 +139,7 @@ def run_macd_only_backtest(
                 strategy_id=strategy_id,
                 symbol=symbol,
                 payload=build_candidate_signal_payload(
+                    signal_id=trade_ref,
                     component_type=sig["component_type"],
                     bar_timestamp=ts_iso,
                     session_at_signal=sig["session_at_signal"],
@@ -172,6 +151,58 @@ def run_macd_only_backtest(
                     macd_cross_velocity=sig["macd_cross_velocity"],
                 ),
             )
+
+        if i <= open_until_bar and max_concurrent <= 1:
+            if ql_emitter:
+                ql_emitter.emit(
+                    event_type="trade_action",
+                    trace_id=trace_id,
+                    timestamp_utc=ts_iso,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    decision_cycle_id=decision_cycle_id,
+                    payload={
+                        "decision": "NO_ACTION",
+                        "reason": canonical_no_action_reason("position_limit_reached"),
+                    },
+                )
+            continue
+
+        trade_date = entry_ts.date()
+        if daily_pnl_r.get(trade_date, 0.0) <= -max_daily_loss_r:
+            if ql_emitter:
+                ql_emitter.emit(
+                    event_type="trade_action",
+                    trace_id=trace_id,
+                    timestamp_utc=ts_iso,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    decision_cycle_id=decision_cycle_id,
+                    payload={
+                        "decision": "NO_ACTION",
+                        "reason": canonical_no_action_reason("risk_blocked"),
+                    },
+                )
+            continue
+
+        if not _spread_ok(cfg, symbol):
+            if ql_emitter:
+                eff = canonical_no_action_reason("spread_block")
+                ql_emitter.emit(
+                    event_type="trade_action",
+                    trace_id=trace_id,
+                    timestamp_utc=ts_iso,
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    decision_cycle_id=decision_cycle_id,
+                    payload={"decision": "NO_ACTION", "reason": eff},
+                )
+            continue
+
+        if ql_emitter:
             ql_emitter.emit(
                 event_type="signal_detected",
                 trace_id=trace_id,
