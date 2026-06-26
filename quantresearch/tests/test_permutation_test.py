@@ -1,7 +1,17 @@
 """Tests for signal timestamp permutation test."""
+import sys
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 
 from quantresearch.statistics.permutation_test import permutation_test
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from analyze_exp_macd_mech_001 import _direction_aware_permutation_test
 
 
 def test_seed_reproducible() -> None:
@@ -42,3 +52,31 @@ def test_empty_signals_returns_neutral() -> None:
     assert result["n_signals"] == 0
     assert result["p_value"] == 1.0
     assert not result["significant"]
+
+
+def test_direction_aware_permutation_preserves_short_returns() -> None:
+    close = np.arange(100.0, 112.0)
+    idx = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
+    data = pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 0.25,
+            "low": close - 0.25,
+            "close": close,
+        },
+        index=idx,
+    )
+    atr = pd.Series(np.ones(len(close)), index=idx)
+
+    result = _direction_aware_permutation_test(
+        data,
+        atr,
+        signal_indices=[0, 1],
+        signal_directions=["LONG", "SHORT"],
+        horizon=2,
+        n_permutations=100,
+        seed=7,
+    )
+
+    assert result["n_signals"] == 2
+    assert result["observed_hit_rate"] == 0.0

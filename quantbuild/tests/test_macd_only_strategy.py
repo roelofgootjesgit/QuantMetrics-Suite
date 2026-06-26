@@ -8,8 +8,10 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
     compute_macd_frame,
+    macd_cross_velocity,
     simulate_macd_time_exit_trade,
 )
+from src.quantbuild.strategies import macd_only_engine
 
 
 def _ohlc(n: int = 120, seed: int = 0) -> pd.DataFrame:
@@ -78,3 +80,48 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_component_observed_velocity_uses_histogram_delta(self, monkeypatch):
+        class RecordingEmitter:
+            def __init__(self):
+                self.events = []
+
+            def emit(self, **event):
+                self.events.append(event)
+                return event
+
+        close = np.concatenate(
+            [
+                np.linspace(1.1000, 1.1200, 60),
+                np.linspace(1.1200, 1.0800, 60),
+                np.linspace(1.0800, 1.1150, 60),
+            ]
+        )
+        dates = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
+        df = pd.DataFrame(
+            {"open": close, "high": close + 0.0001, "low": close - 0.0001, "close": close},
+            index=dates,
+        )
+        cfg = {
+            "experiment_id": "TEST-MACD",
+            "broker": {"account_id": "test"},
+            "quantlog": {"enabled": True},
+            "strategy": {
+                "macd": {"fast": 5, "slow": 10, "signal": 3},
+                "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+                "exit": {"time_exit_bars": 8},
+                "signal_independence": {"min_bars_gap": 1, "min_atr_distance": 0.0},
+            },
+        }
+        emitter = RecordingEmitter()
+        monkeypatch.setattr(macd_only_engine, "_init_backtest_quantlog", lambda _cfg: emitter)
+
+        macd_only_engine.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        observed = [e for e in emitter.events if e["event_type"] == "component_observed"]
+        assert observed
+        mf = compute_macd_frame(df, cfg["strategy"]["macd"])
+        for event in observed:
+            bar_ts = pd.Timestamp(event["payload"]["bar_timestamp"])
+            bar_i = df.index.get_loc(bar_ts)
+            assert event["payload"]["macd_cross_velocity"] == macd_cross_velocity(mf, bar_i)
