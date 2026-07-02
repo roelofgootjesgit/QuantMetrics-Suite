@@ -1,7 +1,7 @@
 """Tests for signal timestamp permutation test."""
 import numpy as np
 
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test, permutation_test
 
 
 def test_seed_reproducible() -> None:
@@ -42,3 +42,55 @@ def test_empty_signals_returns_neutral() -> None:
     assert result["n_signals"] == 0
     assert result["p_value"] == 1.0
     assert not result["significant"]
+
+
+def test_directional_permutation_uses_short_side_return_for_short_signal() -> None:
+    long_outcomes = np.array([0.2, -0.9, 0.1, -0.1], dtype=float)
+    short_outcomes = -long_outcomes
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        np.array([1]),
+        np.array(["SHORT"]),
+        n_permutations=100,
+        seed=7,
+    )
+
+    assert result["observed_hit_rate"] == 0.9
+    assert result["n_signals"] == 1
+
+
+def test_directional_permutation_preserves_signal_direction_mix() -> None:
+    long_outcomes = np.array([1.0, -1.0, 2.0, -2.0], dtype=float)
+    short_outcomes = -long_outcomes
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        np.array([0, 1]),
+        np.array(["LONG", "SHORT"]),
+        n_permutations=100,
+        seed=11,
+    )
+
+    assert result["observed_hit_rate"] == 1.0
+    assert result["n_signals"] == 2
+
+
+def test_directional_permutation_excludes_invalid_forward_return_bars() -> None:
+    long_outcomes = np.array([np.nan, 1.0, -1.0, np.nan], dtype=float)
+    short_outcomes = -long_outcomes
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        np.array([0, 1]),
+        np.array(["LONG", "LONG"]),
+        n_permutations=50,
+        seed=3,
+    )
+
+    assert result["n_signals"] == 1
+    assert result["observed_hit_rate"] == 1.0
+    assert np.isfinite(result["baseline_mean_hit_rate"])
