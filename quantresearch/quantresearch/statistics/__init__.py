@@ -1,5 +1,5 @@
 """Statistical utilities for experiment verdicts."""
 
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test, permutation_test
 
-__all__ = ["permutation_test"]
+__all__ = ["directional_permutation_test", "permutation_test"]
