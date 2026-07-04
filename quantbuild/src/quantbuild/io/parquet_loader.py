@@ -92,6 +92,20 @@ def save_parquet(base_path: Path, symbol: str, timeframe: str, data: pd.DataFram
     data.to_parquet(p, compression="snappy")
 
 
+def _save_parquet_merged(base_path: Path, symbol: str, timeframe: str, data: pd.DataFrame) -> pd.DataFrame:
+    """Persist fetched bars without discarding older cached history."""
+    existing = load_parquet(base_path, symbol, timeframe)
+    if existing.empty:
+        save_parquet(base_path, symbol, timeframe, data)
+        return data.sort_index()
+
+    merged = pd.concat([existing, data])
+    merged.index = pd.to_datetime(merged.index)
+    merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+    save_parquet(base_path, symbol, timeframe, merged)
+    return merged
+
+
 def _get_dukascopy_instrument(symbol: str):
     """Map our symbol names to Dukascopy instrument constants."""
     import dukascopy_python.instruments as inst
@@ -327,7 +341,7 @@ def ensure_data(
             if provider == "ctrader":
                 data = _fetch_ctrader(broker, symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_parquet_merged(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -339,7 +353,7 @@ def ensure_data(
             elif provider == "dukascopy":
                 data = _fetch_dukascopy(symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_parquet_merged(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -351,7 +365,7 @@ def ensure_data(
             elif provider == "yfinance":
                 data = _fetch_yfinance(symbol, timeframe, period_days)
                 if not data.empty:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_parquet_merged(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -470,7 +484,7 @@ def ensure_live_data(
                 data = _fetch_dukascopy(symbol, timeframe, start, now)
 
             if not data.empty and len(data) >= min_bars:
-                save_parquet(base_path, symbol, timeframe, data)
+                _save_parquet_merged(base_path, symbol, timeframe, data)
                 first_ts, last_ts = _frame_range_text(data)
                 logger.info(
                     "live_data_refresh_success requested=%s actual=%s symbol=%s timeframe=%s bars=%d "
@@ -481,7 +495,7 @@ def ensure_live_data(
             if not data.empty and (best_partial is None or len(data) > len(best_partial)):
                 best_partial = data
                 best_partial_source = provider
-                save_parquet(base_path, symbol, timeframe, data)
+                _save_parquet_merged(base_path, symbol, timeframe, data)
             failure_reasons.append(f"{provider}: rows={len(data)}")
         except Exception as e:
             failure_reasons.append(f"{provider}: {e}")
