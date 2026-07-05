@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -220,3 +222,51 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_quantlog_candidate_is_written_when_spread_blocks(self, tmp_path, monkeypatch):
+        from src.quantbuild.strategies import bb_only_engine
+
+        df = _eurusd_df(50)
+        signal = {
+            "bar_index": 20,
+            "component_type": "BB_LOWER_BREAK",
+            "session_at_signal": "NEW_YORK",
+            "regime_at_signal": "TREND",
+            "direction": "LONG",
+            "bb_lower_break": True,
+            "bb_upper_break": False,
+            "bb_extension_normalized_atr": 2.0,
+        }
+        monkeypatch.setattr(
+            bb_only_engine,
+            "collect_bb_entry_signals",
+            lambda *args, **kwargs: [signal],
+        )
+
+        ql_file = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-SPREAD-BLOCK-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.0010},
+            "strategy": {"bollinger": {"length": 20, "stddev": 2.0}},
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+
+        trades = bb_only_engine.run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in ql_file.read_text(encoding="utf-8").splitlines()]
+        candidates = [event for event in events if event["event_type"] == "candidate_signal"]
+        actions = [event for event in events if event["event_type"] == "trade_action"]
+        assert len(candidates) == 1
+        assert len(actions) == 1
+        assert actions[0]["trace_id"] == candidates[0]["trace_id"]
+        assert actions[0]["payload"] == {"decision": "NO_ACTION", "reason": "spread_too_high"}

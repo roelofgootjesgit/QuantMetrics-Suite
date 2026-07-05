@@ -177,3 +177,51 @@ class TestMacdOnly:
 
         assert expected
         assert observed == expected
+
+    def test_quantlog_candidate_is_written_when_spread_blocks(self, tmp_path, monkeypatch):
+        from src.quantbuild.strategies import macd_only_engine
+
+        df = _ohlc(60)
+        signal = {
+            "bar_index": 30,
+            "component_type": "MACD_BULL_CROSS",
+            "session_at_signal": "NEW_YORK",
+            "regime_at_signal": "TREND",
+            "direction": "LONG",
+            "macd_cross_bull": True,
+            "macd_cross_bear": False,
+            "macd_cross_velocity": 0.5,
+        }
+        monkeypatch.setattr(
+            macd_only_engine,
+            "collect_macd_entry_signals",
+            lambda *args, **kwargs: [signal],
+        )
+
+        ql_file = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-SPREAD-BLOCK-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.0010},
+            "strategy": {"macd": {"fast": 5, "slow": 10, "signal": 3}},
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 1.5}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(ql_file),
+            },
+        }
+
+        trades = macd_only_engine.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in ql_file.read_text(encoding="utf-8").splitlines()]
+        candidates = [event for event in events if event["event_type"] == "candidate_signal"]
+        actions = [event for event in events if event["event_type"] == "trade_action"]
+        assert len(candidates) == 1
+        assert len(actions) == 1
+        assert actions[0]["trace_id"] == candidates[0]["trace_id"]
+        assert actions[0]["payload"] == {"decision": "NO_ACTION", "reason": "spread_too_high"}
