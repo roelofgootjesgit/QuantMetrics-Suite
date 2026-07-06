@@ -92,6 +92,29 @@ def save_parquet(base_path: Path, symbol: str, timeframe: str, data: pd.DataFram
     data.to_parquet(p, compression="snappy")
 
 
+def _save_merged_parquet(base_path: Path, symbol: str, timeframe: str, data: pd.DataFrame) -> pd.DataFrame:
+    """Merge refreshed bars into the cache instead of replacing unrelated history."""
+    if data.empty:
+        return load_parquet(base_path, symbol, timeframe)
+
+    def _normalize_index(frame: pd.DataFrame) -> pd.DataFrame:
+        frame = frame.copy()
+        if not isinstance(frame.index, pd.DatetimeIndex) and "timestamp" in frame.columns:
+            frame = frame.set_index("timestamp")
+        frame.index = pd.to_datetime(frame.index, utc=True)
+        frame.index = frame.index.tz_localize(None)
+        return frame
+
+    existing = load_parquet(base_path, symbol, timeframe)
+    fetched = _normalize_index(data)
+    existing = _normalize_index(existing) if not existing.empty else existing
+    merged = pd.concat([existing, fetched]) if not existing.empty else fetched
+    merged = merged.sort_index()
+    merged = merged[~merged.index.duplicated(keep="last")]
+    save_parquet(base_path, symbol, timeframe, merged)
+    return merged
+
+
 def _get_dukascopy_instrument(symbol: str):
     """Map our symbol names to Dukascopy instrument constants."""
     import dukascopy_python.instruments as inst
@@ -327,7 +350,7 @@ def ensure_data(
             if provider == "ctrader":
                 data = _fetch_ctrader(broker, symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_merged_parquet(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -339,7 +362,7 @@ def ensure_data(
             elif provider == "dukascopy":
                 data = _fetch_dukascopy(symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_merged_parquet(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -351,7 +374,7 @@ def ensure_data(
             elif provider == "yfinance":
                 data = _fetch_yfinance(symbol, timeframe, period_days)
                 if not data.empty:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    _save_merged_parquet(base_path, symbol, timeframe, data)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -470,7 +493,7 @@ def ensure_live_data(
                 data = _fetch_dukascopy(symbol, timeframe, start, now)
 
             if not data.empty and len(data) >= min_bars:
-                save_parquet(base_path, symbol, timeframe, data)
+                _save_merged_parquet(base_path, symbol, timeframe, data)
                 first_ts, last_ts = _frame_range_text(data)
                 logger.info(
                     "live_data_refresh_success requested=%s actual=%s symbol=%s timeframe=%s bars=%d "
@@ -481,7 +504,7 @@ def ensure_live_data(
             if not data.empty and (best_partial is None or len(data) > len(best_partial)):
                 best_partial = data
                 best_partial_source = provider
-                save_parquet(base_path, symbol, timeframe, data)
+                _save_merged_parquet(base_path, symbol, timeframe, data)
             failure_reasons.append(f"{provider}: rows={len(data)}")
         except Exception as e:
             failure_reasons.append(f"{provider}: {e}")
