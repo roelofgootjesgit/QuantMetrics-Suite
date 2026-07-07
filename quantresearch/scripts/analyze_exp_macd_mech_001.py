@@ -36,12 +36,89 @@ from src.quantbuild.strategies.macd_only import (
 from quantresearch.statistics.permutation_test import permutation_test
 
 
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
+EXPERIMENT_ID = "EXP-MACD-MECH-001"
+MACD_COMPONENT_TYPES = frozenset({"MACD_BULL_CROSS", "MACD_BEAR_CROSS"})
+
+
+def _event_matches_experiment(ev: dict[str, Any], *, experiment_id: str, symbol: str) -> bool:
+    ev_symbol = ev.get("symbol")
+    if ev_symbol is not None and str(ev_symbol).upper() != symbol.upper():
+        return False
+
+    if str(ev.get("strategy_id") or "") == experiment_id:
+        return True
+
+    payload = ev.get("payload") or {}
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("component_type") in MACD_COMPONENT_TYPES:
+        return True
+    return payload.get("type") == "macd_cross"
+
+
+def _jsonl_contains_experiment(path: Path, *, experiment_id: str, symbol: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(ev, dict) and _event_matches_experiment(
+                    ev, experiment_id=experiment_id, symbol=symbol
+                ):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _find_latest_run_jsonl(
+    ql_base: Path,
+    *,
+    experiment_id: str = EXPERIMENT_ID,
+    symbol: str = "EURUSD",
+) -> Path | None:
     runs = ql_base / "runs"
     if not runs.is_dir():
         return None
     files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+    for path in files:
+        if _jsonl_contains_experiment(path, experiment_id=experiment_id, symbol=symbol):
+            return path
+    return None
+
+
+def _trade_stats_from_quantlog(
+    quantlog_path: Path,
+    *,
+    experiment_id: str = EXPERIMENT_ID,
+    symbol: str = "EURUSD",
+) -> dict[str, Any]:
+    closed = []
+    for line in quantlog_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        ev = json.loads(line)
+        if ev.get("event_type") != "trade_closed":
+            continue
+        if not _event_matches_experiment(ev, experiment_id=experiment_id, symbol=symbol):
+            continue
+        closed.append(ev.get("payload") or {})
+    if not closed:
+        return {}
+    pnl_r = [float(c.get("pnl_r", 0)) for c in closed]
+    return {
+        "n_trades": len(closed),
+        "expectancy_r": float(np.mean(pnl_r)),
+        "win_rate_pct": 100.0 * sum(1 for r in pnl_r if r > 0) / len(pnl_r),
+        "profit_factor": (
+            sum(r for r in pnl_r if r > 0) / abs(sum(r for r in pnl_r if r < 0))
+            if sum(r for r in pnl_r if r < 0) else None
+        ),
+    }
 
 
 def _forward_return_r(
@@ -225,27 +302,12 @@ def analyze(
 
     trade_stats: dict[str, Any] = {}
     if quantlog_path and quantlog_path.is_file():
-        closed = []
-        for line in quantlog_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            ev = json.loads(line)
-            if ev.get("event_type") == "trade_closed":
-                closed.append(ev.get("payload") or {})
-        if closed:
-            pnl_r = [float(c.get("pnl_r", 0)) for c in closed]
-            trade_stats = {
-                "n_trades": len(closed),
-                "expectancy_r": float(np.mean(pnl_r)),
-                "win_rate_pct": 100.0 * sum(1 for r in pnl_r if r > 0) / len(pnl_r),
-                "profit_factor": (
-                    sum(r for r in pnl_r if r > 0) / abs(sum(r for r in pnl_r if r < 0))
-                    if sum(r for r in pnl_r if r < 0) else None
-                ),
-            }
+        trade_stats = _trade_stats_from_quantlog(
+            quantlog_path, experiment_id=EXPERIMENT_ID, symbol=symbol
+        )
 
     summary: dict[str, Any] = {
-        "experiment_id": "EXP-MACD-MECH-001",
+        "experiment_id": EXPERIMENT_ID,
         "data_first_bar": str(data.index.min()) if len(data) else None,
         "data_last_bar": str(data.index.max()) if len(data) else None,
         "n_bars": len(data),
@@ -309,9 +371,10 @@ def main() -> int:
     ql_path = args.quantlog
     if ql_path is None:
         cfg = load_config(args.config)
+        symbol = str(cfg.get("symbol", "EURUSD"))
         ql_cfg = cfg.get("quantlog") or {}
         ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
+        ql_path = _find_latest_run_jsonl(ql_base, experiment_id=EXPERIMENT_ID, symbol=symbol)
 
     analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
     return 0
