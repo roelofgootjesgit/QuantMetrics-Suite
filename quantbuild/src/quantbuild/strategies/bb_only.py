@@ -117,8 +117,9 @@ def collect_bb_entry_signals(
     atr_series = compute_atr(data, period=14)
     bands = compute_bb_bands(data, bollinger_cfg)
     long_raw, short_raw = detect_bb_component_observations(data, bands)
-    long_ind = apply_independence_to_signals(long_raw, data, atr_series, indep_cfg)
-    short_ind = apply_independence_to_signals(short_raw, data, atr_series, indep_cfg)
+    any_ind = apply_independence_to_signals(long_raw | short_raw, data, atr_series, indep_cfg)
+    long_ind = any_ind & long_raw
+    short_ind = any_ind & short_raw
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
@@ -210,12 +211,12 @@ def simulate_bb_midline_trade(
             favorable = hi - entry_price
             adverse = entry_price - lo
             sl_hit = lo <= sl
-            mid_hit = close_arr[j] >= mid_v
+            mid_hit = hi >= mid_v
         else:
             favorable = entry_price - lo
             adverse = hi - entry_price
             sl_hit = hi >= sl
-            mid_hit = close_arr[j] <= mid_v
+            mid_hit = lo <= mid_v
 
         max_favorable = max(max_favorable, favorable)
         max_adverse = max(max_adverse, adverse)

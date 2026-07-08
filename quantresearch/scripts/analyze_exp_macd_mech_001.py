@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -23,25 +24,33 @@ for p in (_QB, _QB / "src", _QR):
 from src.quantbuild.config import load_config, quantbuild_repo_root
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.indicators.bollinger import bollinger_bands
-from src.quantbuild.indicators.macd import macd as compute_macd
 from src.quantbuild.io.parquet_loader import load_parquet
 from src.quantbuild.strategies.macd_only import (
-    apply_independence_to_signals,
     collect_macd_entry_signals,
     detect_macd_component_observations,
     macd_only_strategy_cfg,
-    macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
 
 
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
-    runs = ql_base / "runs"
-    if not runs.is_dir():
+def _configured_quantlog_run_id(ql_cfg: dict[str, Any]) -> str | None:
+    raw = ql_cfg.get("run_id")
+    if raw is not None:
+        run_id = str(raw).strip()
+        if run_id:
+            return run_id
+    for env_key in ("QUANTBUILD_RUN_ID", "INVOCATION_ID"):
+        run_id = os.environ.get(env_key, "").strip()
+        if run_id:
+            return run_id
+    return None
+
+
+def _default_quantlog_path(ql_cfg: dict[str, Any], ql_base: Path) -> Path | None:
+    run_id = _configured_quantlog_run_id(ql_cfg)
+    if run_id is None:
         return None
-    files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+    return ql_base / "runs" / f"{run_id}.jsonl"
 
 
 def _forward_return_r(
@@ -119,6 +128,119 @@ def _bb_macd_correlation(data: pd.DataFrame, macd_frame: pd.DataFrame) -> dict[s
     }
 
 
+def _directional_t8_permutation_test(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+    n_permutations: int = 2000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    close_arr = data["close"].values.astype(float)
+    atr_arr = atr_series.values.astype(float)
+    valid_pos_by_bar: dict[int, int] = {}
+    long_universe: list[float] = []
+    short_universe: list[float] = []
+
+    for i in range(len(close_arr) - horizon):
+        entry = close_arr[i]
+        exit_p = close_arr[i + horizon]
+        atr_v = atr_arr[i]
+        if not (np.isfinite(entry) and np.isfinite(exit_p) and np.isfinite(atr_v) and atr_v > 0):
+            continue
+        long_r = (exit_p - entry) / (2.0 * atr_v)
+        valid_pos_by_bar[i] = len(long_universe)
+        long_universe.append(float(long_r))
+        short_universe.append(float(-long_r))
+
+    long_signal_returns: list[float] = []
+    short_signal_returns: list[float] = []
+    for sig in entries:
+        pos = valid_pos_by_bar.get(int(sig["bar_index"]))
+        if pos is None:
+            continue
+        if sig["direction"] == "LONG":
+            long_signal_returns.append(long_universe[pos])
+        else:
+            short_signal_returns.append(short_universe[pos])
+
+    n_long = len(long_signal_returns)
+    n_short = len(short_signal_returns)
+    n_signals = n_long + n_short
+    if n_signals == 0:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+            "n_long_signals": 0,
+            "n_short_signals": 0,
+            "n_candidate_bars": len(long_universe),
+        }
+    if n_long > len(long_universe) or n_short > len(short_universe):
+        raise ValueError("not enough valid candidate bars for directional permutation")
+
+    observed = float(np.mean(long_signal_returns + short_signal_returns))
+    long_arr = np.array(long_universe, dtype=float)
+    short_arr = np.array(short_universe, dtype=float)
+    rng = np.random.default_rng(seed)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    for i in range(n_permutations):
+        samples: list[float] = []
+        if n_long:
+            long_idx = rng.choice(len(long_arr), size=n_long, replace=False)
+            samples.extend(float(v) for v in long_arr[long_idx])
+        if n_short:
+            short_idx = rng.choice(len(short_arr), size=n_short, replace=False)
+            samples.extend(float(v) for v in short_arr[short_idx])
+        perm_rates[i] = float(np.mean(samples))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed))
+    return {
+        "observed_hit_rate": observed,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": n_signals,
+        "n_permutations": n_permutations,
+        "seed": seed,
+        "n_long_signals": n_long,
+        "n_short_signals": n_short,
+        "n_candidate_bars": len(long_universe),
+    }
+
+
+def _load_matching_trade_closed(
+    quantlog_path: Path,
+    *,
+    experiment_id: str,
+    symbol: str,
+) -> list[dict[str, Any]]:
+    closed: list[dict[str, Any]] = []
+    total_trade_closed = 0
+    for line in quantlog_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        ev = json.loads(line)
+        if ev.get("event_type") != "trade_closed":
+            continue
+        total_trade_closed += 1
+        if ev.get("strategy_id") != experiment_id or ev.get("symbol") != symbol:
+            continue
+        closed.append(ev.get("payload") or {})
+    if total_trade_closed and not closed:
+        raise ValueError(
+            f"{quantlog_path} contains trade_closed events, but none match "
+            f"strategy_id={experiment_id!r} and symbol={symbol!r}"
+        )
+    return closed
+
+
 def _velocity_histogram(velocities: list[float], bins: int = 10) -> dict[str, Any]:
     if not velocities:
         return {"bins": [], "counts": []}
@@ -170,7 +292,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +300,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +314,14 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = _directional_t8_permutation_test(
+        data,
+        atr_series,
+        entries,
+        horizon=8,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
@@ -225,13 +342,11 @@ def analyze(
 
     trade_stats: dict[str, Any] = {}
     if quantlog_path and quantlog_path.is_file():
-        closed = []
-        for line in quantlog_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            ev = json.loads(line)
-            if ev.get("event_type") == "trade_closed":
-                closed.append(ev.get("payload") or {})
+        closed = _load_matching_trade_closed(
+            quantlog_path,
+            experiment_id="EXP-MACD-MECH-001",
+            symbol=symbol,
+        )
         if closed:
             pnl_r = [float(c.get("pnl_r", 0)) for c in closed]
             trade_stats = {
@@ -311,7 +426,14 @@ def main() -> int:
         cfg = load_config(args.config)
         ql_cfg = cfg.get("quantlog") or {}
         ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
+        ql_path = _default_quantlog_path(ql_cfg, ql_base)
+        if ql_path is None:
+            raise SystemExit(
+                "Refusing to infer EXP-MACD-MECH-001 QuantLog from latest mtime; "
+                "pass --quantlog or set quantlog.run_id/QUANTBUILD_RUN_ID."
+            )
+        if not ql_path.is_file():
+            raise SystemExit(f"Configured QuantLog run file not found: {ql_path}")
 
     analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
     return 0
