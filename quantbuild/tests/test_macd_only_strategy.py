@@ -1,6 +1,8 @@
 """Tests for MACD-only strategy (EXP-MACD-MECH-001)."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -78,3 +80,49 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_raw_component_quantlog_uses_velocity_delta_and_not_independent(
+        self, tmp_path, monkeypatch
+    ):
+        from src.quantbuild.strategies import macd_only_engine
+
+        df = _ohlc(5)
+        index = df.index
+        fake_macd = pd.DataFrame(
+            {
+                "histogram": [0.0, -0.20, 0.10, 0.05, 0.0],
+                "bullish_cross": [False, False, True, False, False],
+                "bearish_cross": [False, False, False, False, False],
+            },
+            index=index,
+        )
+
+        monkeypatch.setattr(macd_only_engine, "compute_macd_frame", lambda data, cfg: fake_macd)
+        monkeypatch.setattr(
+            macd_only_engine,
+            "detect_macd_component_observations",
+            lambda frame: (
+                pd.Series([False, False, True, False, False], index=index),
+                pd.Series([False] * len(index), index=index),
+            ),
+        )
+        monkeypatch.setattr(macd_only_engine, "collect_macd_entry_signals", lambda *args, **kwargs: [])
+
+        out = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001",
+            "broker": {"account_id": "backtest"},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(out),
+            },
+        }
+        trades = macd_only_engine.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+        component = next(ev for ev in events if ev["event_type"] == "component_observed")
+        assert np.isclose(component["payload"]["macd_cross_velocity"], 0.30)
+        assert component["payload"]["signal_is_independent"] is False

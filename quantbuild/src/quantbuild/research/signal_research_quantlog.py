@@ -63,6 +63,7 @@ def build_component_observed_payload(
         "session_at_signal": session_at_signal,
         "regime_at_signal": regime_at_signal,
     }
+    metrics.setdefault("signal_is_independent", False)
     payload.update(signal_research_metrics(**metrics))
     return payload
 
