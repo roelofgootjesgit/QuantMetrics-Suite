@@ -137,3 +137,14 @@ def test_component_observed_payload_required_keys() -> None:
         "regime_at_signal",
     ):
         assert key in p
+
+
+def test_component_observed_payload_defaults_to_not_independent() -> None:
+    p = build_component_observed_payload(
+        component_type="MACD_BULL_CROSS",
+        bar_timestamp="2026-01-01T00:00:00Z",
+        session_at_signal="OFF_HOURS",
+        regime_at_signal="UNKNOWN",
+        macd_cross_bull=True,
+    )
+    assert p["signal_is_independent"] is False

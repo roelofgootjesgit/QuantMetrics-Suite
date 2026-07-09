@@ -1,7 +1,7 @@
 """Tests for signal timestamp permutation test."""
 import numpy as np
 
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test, permutation_test
 
 
 def test_seed_reproducible() -> None:
@@ -39,6 +39,38 @@ def test_random_labels_not_structurally_significant() -> None:
 
 def test_empty_signals_returns_neutral() -> None:
     result = permutation_test(np.ones(50), np.array([], dtype=int), seed=1)
+    assert result["n_signals"] == 0
+    assert result["p_value"] == 1.0
+    assert not result["significant"]
+
+
+def test_directional_permutation_uses_signal_direction_for_observed_mean() -> None:
+    long_outcomes = np.array([0.0, 2.0, -2.0, 0.0])
+    short_outcomes = -long_outcomes
+    signals = np.array([1, 2])
+    directions = np.array(["LONG", "SHORT"])
+
+    result = directional_permutation_test(
+        long_outcomes,
+        short_outcomes,
+        signals,
+        directions,
+        n_permutations=100,
+        seed=7,
+    )
+
+    assert result["observed_hit_rate"] == 2.0
+    assert result["n_signals"] == 2
+
+
+def test_directional_permutation_empty_signals_returns_neutral() -> None:
+    result = directional_permutation_test(
+        np.ones(50),
+        np.ones(50),
+        np.array([], dtype=int),
+        np.array([], dtype=str),
+        seed=1,
+    )
     assert result["n_signals"] == 0
     assert result["p_value"] == 1.0
     assert not result["significant"]

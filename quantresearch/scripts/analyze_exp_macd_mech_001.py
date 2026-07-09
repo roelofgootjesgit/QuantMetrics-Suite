@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -33,15 +34,61 @@ from src.quantbuild.strategies.macd_only import (
     macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
+from quantresearch.statistics.permutation_test import directional_permutation_test
 
 
-def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
-    runs = ql_base / "runs"
-    if not runs.is_dir():
-        return None
-    files = sorted(runs.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+def _configured_quantlog_run_id(ql_cfg: dict[str, Any]) -> str | None:
+    raw = ql_cfg.get("run_id")
+    if raw is not None:
+        run_id = str(raw).strip()
+        if run_id:
+            return run_id
+    for env_key in ("QUANTBUILD_RUN_ID", "INVOCATION_ID"):
+        run_id = os.environ.get(env_key, "").strip()
+        if run_id:
+            return run_id
+    return None
+
+
+def _resolve_configured_quantlog_path(cfg: dict[str, Any]) -> Path | None:
+    ql_cfg = cfg.get("quantlog") or {}
+    consolidated = ql_cfg.get("consolidated_run_file")
+    raw_base = Path(str(ql_cfg.get("base_path", "data/quantlog_events")))
+    ql_base = raw_base.resolve() if raw_base.is_absolute() else (quantbuild_repo_root() / raw_base).resolve()
+
+    if isinstance(consolidated, str) and consolidated.strip():
+        raw_path = Path(consolidated.strip())
+        return raw_path.resolve() if raw_path.is_absolute() else (quantbuild_repo_root() / raw_path).resolve()
+
+    if consolidated is True:
+        run_id = _configured_quantlog_run_id(ql_cfg)
+        if run_id:
+            return ql_base / "runs" / f"{run_id}.jsonl"
+    return None
+
+
+def _load_matching_trade_closed_payloads(
+    quantlog_path: Path,
+    *,
+    experiment_id: str,
+    symbol: str,
+) -> list[dict[str, Any]]:
+    closed: list[dict[str, Any]] = []
+    symbol_u = symbol.upper()
+    for line in quantlog_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        ev = json.loads(line)
+        if ev.get("event_type") != "trade_closed":
+            continue
+        if str(ev.get("strategy_id") or "") != experiment_id:
+            continue
+        if str(ev.get("symbol") or "").upper() != symbol_u:
+            continue
+        payload = ev.get("payload") or {}
+        if isinstance(payload, dict):
+            closed.append(payload)
+    return closed
 
 
 def _forward_return_r(
@@ -139,6 +186,7 @@ def analyze(
     output_dir: Path,
 ) -> dict[str, Any]:
     cfg = load_config(config_path)
+    experiment_id = str(cfg.get("experiment_id") or "EXP-MACD-MECH-001")
     symbol = cfg.get("symbol", "EURUSD")
     base_path = quantbuild_repo_root() / Path(cfg.get("data", {}).get("base_path", "data/market_cache"))
     bt = cfg.get("backtest") or {}
@@ -170,7 +218,8 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
+    permutation_signal_indices: list[int] = []
+    permutation_signal_directions: list[str] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,32 +228,46 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
             tae_bars.append(tae)
+        r8 = None
         for h in horizons:
             r = _forward_return_r(data, atr_series, i, direction, h)
             if r is not None:
                 fwd[f"T+{h}"].append(r)
-        r8 = _forward_return_r(data, atr_series, i, direction, 8)
+            if h == 8:
+                r8 = r
         if r8 is not None:
             t8_n += 1
+            permutation_signal_indices.append(i)
+            permutation_signal_directions.append(direction)
             if r8 > 0:
                 t8_wins += 1
 
     close_arr = data["close"].values.astype(float)
     atr_arr = atr_series.values.astype(float)
     n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
+    long_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    short_universe_returns = np.full(n_bars, np.nan, dtype=float)
+    for i in range(n_bars):
+        if i + 8 >= n_bars:
             continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
+        atr_v = atr_arr[i]
+        if atr_v <= 0 or not np.isfinite(atr_v):
+            continue
+        long_universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
+        short_universe_returns[i] = (close_arr[i] - close_arr[i + 8]) / (2.0 * atr_v)
 
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = directional_permutation_test(
+        long_universe_returns,
+        short_universe_returns,
+        np.array(permutation_signal_indices, dtype=int),
+        np.array(permutation_signal_directions),
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
@@ -225,13 +288,11 @@ def analyze(
 
     trade_stats: dict[str, Any] = {}
     if quantlog_path and quantlog_path.is_file():
-        closed = []
-        for line in quantlog_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            ev = json.loads(line)
-            if ev.get("event_type") == "trade_closed":
-                closed.append(ev.get("payload") or {})
+        closed = _load_matching_trade_closed_payloads(
+            quantlog_path,
+            experiment_id=experiment_id,
+            symbol=str(symbol),
+        )
         if closed:
             pnl_r = [float(c.get("pnl_r", 0)) for c in closed]
             trade_stats = {
@@ -245,7 +306,7 @@ def analyze(
             }
 
     summary: dict[str, Any] = {
-        "experiment_id": "EXP-MACD-MECH-001",
+        "experiment_id": experiment_id,
         "data_first_bar": str(data.index.min()) if len(data) else None,
         "data_last_bar": str(data.index.max()) if len(data) else None,
         "n_bars": len(data),
@@ -309,9 +370,13 @@ def main() -> int:
     ql_path = args.quantlog
     if ql_path is None:
         cfg = load_config(args.config)
-        ql_cfg = cfg.get("quantlog") or {}
-        ql_base = quantbuild_repo_root() / Path(ql_cfg.get("base_path", "data/quantlog_events"))
-        ql_path = _find_latest_run_jsonl(ql_base)
+        ql_path = _resolve_configured_quantlog_path(cfg)
+        if ql_path is None:
+            print(
+                "No explicit QuantLog run configured; backtest_trade_stats will be omitted. "
+                "Pass --quantlog or set quantlog.run_id to include trade stats.",
+                file=sys.stderr,
+            )
 
     analyze(config_path=args.config, quantlog_path=ql_path, output_dir=args.output_dir)
     return 0
