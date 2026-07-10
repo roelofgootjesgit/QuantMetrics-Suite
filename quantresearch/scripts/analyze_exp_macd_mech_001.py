@@ -33,7 +33,6 @@ from src.quantbuild.strategies.macd_only import (
     macd_cross_velocity,
     compute_macd_frame,
 )
-from quantresearch.statistics.permutation_test import permutation_test
 
 
 def _find_latest_run_jsonl(ql_base: Path) -> Path | None:
@@ -90,6 +89,95 @@ def _time_to_adverse_excursion(
         if adverse >= threshold:
             return j - bar_i
     return None
+
+
+def _direction_preserving_permutation_test(
+    data: pd.DataFrame,
+    atr_series: pd.Series,
+    entries: list[dict[str, Any]],
+    *,
+    horizon: int = 8,
+    n_permutations: int = 2000,
+    seed: int = 42,
+) -> dict[str, float | int | bool]:
+    """Compare signals with random timestamps while preserving LONG/SHORT mix."""
+    close_arr = data["close"].values.astype(float)
+    atr_arr = atr_series.values.astype(float)
+    n_bars = len(close_arr)
+    valid_until = n_bars - horizon
+    if valid_until <= 0:
+        raise ValueError("not enough bars for permutation horizon")
+
+    long_universe: list[float] = []
+    short_universe: list[float] = []
+    for i in range(valid_until):
+        atr_v = float(atr_arr[i])
+        if not np.isfinite(atr_v) or atr_v <= 0:
+            continue
+        move_r = (float(close_arr[i + horizon]) - float(close_arr[i])) / (2.0 * atr_v)
+        long_universe.append(move_r)
+        short_universe.append(-move_r)
+
+    observed_long: list[float] = []
+    observed_short: list[float] = []
+    for sig in entries:
+        i = int(sig["bar_index"])
+        direction = str(sig["direction"]).upper()
+        r = _forward_return_r(data, atr_series, i, direction, horizon)
+        if r is None:
+            continue
+        if direction == "LONG":
+            observed_long.append(r)
+        elif direction == "SHORT":
+            observed_short.append(r)
+        else:
+            raise ValueError(f"invalid signal direction: {direction!r}")
+
+    n_long = len(observed_long)
+    n_short = len(observed_short)
+    n_signals = n_long + n_short
+    if n_signals == 0:
+        return {
+            "observed_hit_rate": 0.0,
+            "baseline_mean_hit_rate": 0.0,
+            "p_value": 1.0,
+            "significant": False,
+            "n_signals": 0,
+            "n_permutations": n_permutations,
+            "seed": seed,
+            "n_long_signals": 0,
+            "n_short_signals": 0,
+        }
+
+    long_arr = np.asarray(long_universe, dtype=float)
+    short_arr = np.asarray(short_universe, dtype=float)
+    if n_long > len(long_arr) or n_short > len(short_arr):
+        raise ValueError("not enough valid bars for direction-preserving permutation")
+
+    observed = float(np.mean(np.asarray(observed_long + observed_short, dtype=float)))
+    rng = np.random.default_rng(seed)
+    perm_rates = np.empty(n_permutations, dtype=float)
+    for i in range(n_permutations):
+        sample_parts = []
+        if n_long:
+            sample_parts.append(rng.choice(long_arr, size=n_long, replace=False))
+        if n_short:
+            sample_parts.append(rng.choice(short_arr, size=n_short, replace=False))
+        perm_rates[i] = float(np.mean(np.concatenate(sample_parts)))
+
+    baseline_mean = float(np.mean(perm_rates))
+    p_value = float(np.mean(perm_rates >= observed))
+    return {
+        "observed_hit_rate": observed,
+        "baseline_mean_hit_rate": baseline_mean,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "n_signals": n_signals,
+        "n_permutations": n_permutations,
+        "seed": seed,
+        "n_long_signals": n_long,
+        "n_short_signals": n_short,
+    }
 
 
 def _bb_macd_correlation(data: pd.DataFrame, macd_frame: pd.DataFrame) -> dict[str, Any]:
@@ -170,7 +258,6 @@ def analyze(
     fwd: dict[str, list[float]] = {f"T+{h}": [] for h in horizons}
     tae_bars: list[int] = []
     velocities: list[float] = []
-    signal_indices: list[int] = []
     t8_wins = 0
     t8_n = 0
 
@@ -179,7 +266,6 @@ def analyze(
     for sig in entries:
         i = int(sig["bar_index"])
         direction = sig["direction"]
-        signal_indices.append(i)
         velocities.append(float(sig["macd_cross_velocity"]))
         tae = _time_to_adverse_excursion(data, atr_series, i, direction, sl_atr_mult=sl_mult)
         if tae is not None:
@@ -194,17 +280,14 @@ def analyze(
             if r8 > 0:
                 t8_wins += 1
 
-    close_arr = data["close"].values.astype(float)
-    atr_arr = atr_series.values.astype(float)
-    n_bars = len(close_arr)
-    universe_returns = np.zeros(n_bars, dtype=float)
-    for i in range(n_bars - 16):
-        atr_v = atr_arr[i]
-        if atr_v <= 0:
-            continue
-        universe_returns[i] = (close_arr[i + 8] - close_arr[i]) / (2.0 * atr_v)
-
-    perm = permutation_test(universe_returns, np.array(signal_indices, dtype=int), n_permutations=2000, seed=42)
+    perm = _direction_preserving_permutation_test(
+        data,
+        atr_series,
+        entries,
+        horizon=8,
+        n_permutations=2000,
+        seed=42,
+    )
 
     # Velocity vs win at T+8
     vel_win_pairs: list[tuple[float, int]] = []
