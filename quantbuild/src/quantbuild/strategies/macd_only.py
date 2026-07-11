@@ -81,8 +81,9 @@ def collect_macd_entry_signals(
     atr_series = compute_atr(data, period=14)
 
     bull_raw, bear_raw = detect_macd_component_observations(macd_frame)
-    bull_ind = apply_independence_to_signals(bull_raw, data, atr_series, indep_cfg)
-    bear_ind = apply_independence_to_signals(bear_raw, data, atr_series, indep_cfg)
+    any_ind = apply_independence_to_signals(bull_raw | bear_raw, data, atr_series, indep_cfg)
+    bull_ind = bull_raw & any_ind
+    bear_ind = bear_raw & any_ind
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
