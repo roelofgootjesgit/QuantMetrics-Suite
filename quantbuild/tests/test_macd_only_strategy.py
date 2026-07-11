@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import src.quantbuild.strategies.macd_only as macd_only
 from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
@@ -78,3 +79,32 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_collect_entries_filters_opposite_direction_clusters(self, monkeypatch):
+        df = _ohlc(30)
+        macd_frame = pd.DataFrame(
+            {
+                "bullish_cross": [False] * len(df),
+                "bearish_cross": [False] * len(df),
+                "histogram": np.zeros(len(df)),
+            },
+            index=df.index,
+        )
+        macd_frame.iloc[10, macd_frame.columns.get_loc("bullish_cross")] = True
+        macd_frame.iloc[11, macd_frame.columns.get_loc("bearish_cross")] = True
+        macd_frame.iloc[10, macd_frame.columns.get_loc("histogram")] = 0.1
+        macd_frame.iloc[11, macd_frame.columns.get_loc("histogram")] = -0.1
+        atr = pd.Series(0.01, index=df.index)
+
+        monkeypatch.setattr(macd_only, "compute_macd_frame", lambda data, cfg: macd_frame)
+        monkeypatch.setattr(macd_only, "compute_atr", lambda data, period=14: atr)
+
+        entries = collect_macd_entry_signals(
+            df,
+            {
+                "macd": {"fast": 8, "slow": 17, "signal": 5},
+                "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+            },
+        )
+
+        assert [(e["bar_index"], e["direction"]) for e in entries] == [(10, "LONG")]
