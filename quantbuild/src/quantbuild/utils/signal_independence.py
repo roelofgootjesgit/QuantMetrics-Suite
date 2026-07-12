@@ -1,4 +1,6 @@
 """Filter clustered signals so only spatially/temporally independent ones pass."""
+from typing import Sequence
+
 import numpy as np
 import pandas as pd
 
@@ -50,3 +52,31 @@ def signal_independence_mask(
             last_price = price
 
     return out
+
+
+def component_signal_independence_masks(
+    signals: Sequence[pd.Series],
+    close: pd.Series,
+    atr: pd.Series,
+    min_bars_gap: int = 4,
+    min_atr_distance: float = 1.5,
+) -> tuple[pd.Series, ...]:
+    """Apply one independence filter across multiple component signal streams."""
+    if not signals:
+        return ()
+
+    combined = pd.Series(False, index=signals[0].index, dtype=bool)
+    normalized: list[pd.Series] = []
+    for signal in signals:
+        sig = signal.fillna(False).astype(bool)
+        normalized.append(sig)
+        combined = combined | sig
+
+    global_mask = signal_independence_mask(
+        combined,
+        close,
+        atr,
+        min_bars_gap=min_bars_gap,
+        min_atr_distance=min_atr_distance,
+    )
+    return tuple(sig & global_mask for sig in normalized)
