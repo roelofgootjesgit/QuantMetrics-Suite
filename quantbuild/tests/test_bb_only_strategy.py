@@ -42,6 +42,22 @@ def _trend_down_through_bands(n: int = 80) -> pd.DataFrame:
     )
 
 
+def _bb_outlier_df(n: int = 120) -> pd.DataFrame:
+    dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+    close = np.full(n, 1.10) + np.linspace(0, 0.0005, n)
+    close[40] = 1.095
+    close[70] = 1.1055
+    return pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 0.0001,
+            "low": close - 0.0001,
+            "close": close,
+        },
+        index=dates,
+    )
+
+
 class TestBBOnlySignals:
     def test_detect_lower_break(self):
         df = _eurusd_df(60, seed=1)
@@ -153,10 +169,10 @@ class TestBBOnlyBacktestEngine:
     def test_spread_block_keeps_independent_candidate_events(self, tmp_path):
         from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
 
-        df = _trend_down_through_bands(150)
+        df = _bb_outlier_df(150)
         strategy = {
             "bollinger": {"length": 20, "stddev": 2.0},
-            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 1.5},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
         }
         expected_candidates = collect_bb_entry_signals(df, strategy)
         assert expected_candidates
