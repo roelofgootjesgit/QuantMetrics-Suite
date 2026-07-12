@@ -9,7 +9,10 @@ import pandas as pd
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.indicators.macd import macd as compute_macd
 from src.quantbuild.strategies.bb_only import regime_at_signal_label, session_at_signal_label
-from src.quantbuild.utils.signal_independence import signal_independence_mask
+from src.quantbuild.utils.signal_independence import (
+    component_signal_independence_masks,
+    signal_independence_mask,
+)
 
 
 STRATEGY_ID = "macd_only"
@@ -81,8 +84,13 @@ def collect_macd_entry_signals(
     atr_series = compute_atr(data, period=14)
 
     bull_raw, bear_raw = detect_macd_component_observations(macd_frame)
-    bull_ind = apply_independence_to_signals(bull_raw, data, atr_series, indep_cfg)
-    bear_ind = apply_independence_to_signals(bear_raw, data, atr_series, indep_cfg)
+    bull_ind, bear_ind = component_signal_independence_masks(
+        (bull_raw, bear_raw),
+        data["close"],
+        atr_series,
+        min_bars_gap=int(indep_cfg.get("min_bars_gap", 4)),
+        min_atr_distance=float(indep_cfg.get("min_atr_distance", 1.5)),
+    )
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):

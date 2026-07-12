@@ -1,6 +1,8 @@
 """Tests for MACD-only strategy (EXP-MACD-MECH-001)."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -8,6 +10,7 @@ from src.quantbuild.strategies.macd_only import (
     collect_macd_entry_signals,
     detect_macd_component_observations,
     compute_macd_frame,
+    macd_cross_velocity,
     simulate_macd_time_exit_trade,
 )
 
@@ -78,3 +81,62 @@ class TestMacdOnly:
         idx = [e["bar_index"] for e in entries]
         for a, b in zip(idx, idx[1:]):
             assert b - a >= 4
+
+    def test_spread_block_keeps_candidates_and_delta_velocity(self, tmp_path):
+        from src.quantbuild.strategies.macd_only_engine import run_macd_only_backtest
+
+        close = np.concatenate([np.linspace(1.10, 1.12, 60), np.linspace(1.12, 1.08, 60)])
+        dates = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
+        df = pd.DataFrame(
+            {"open": close, "high": close + 0.0001, "low": close - 0.0001, "close": close},
+            index=dates,
+        )
+        strategy = {
+            "macd": {"fast": 5, "slow": 10, "signal": 3},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+        }
+        expected_candidates = collect_macd_entry_signals(df, strategy)
+        assert expected_candidates
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001-TEST",
+            "symbol": "EURUSD",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": strategy,
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 0.1}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(tmp_path / "events.jsonl"),
+            },
+        }
+
+        trades = run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [
+            json.loads(line)
+            for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        candidates = [ev for ev in events if ev["event_type"] == "candidate_signal"]
+        no_actions = [
+            ev
+            for ev in events
+            if ev["event_type"] == "trade_action"
+            and ev["payload"]["decision"] == "NO_ACTION"
+            and ev["payload"]["reason"] == "spread_too_high"
+        ]
+        assert len(candidates) == len(expected_candidates)
+        assert len(no_actions) == len(expected_candidates)
+
+        component = next(ev for ev in events if ev["event_type"] == "component_observed")
+        ts = pd.Timestamp(component["payload"]["bar_timestamp"])
+        i = int(df.index.get_loc(ts))
+        mf = compute_macd_frame(df, strategy["macd"])
+        assert np.isclose(
+            component["payload"]["macd_cross_velocity"],
+            macd_cross_velocity(mf, i),
+        )

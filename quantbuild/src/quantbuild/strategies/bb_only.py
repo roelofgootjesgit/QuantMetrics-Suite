@@ -8,7 +8,10 @@ import pandas as pd
 
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.indicators.bollinger import bollinger_bands
-from src.quantbuild.utils.signal_independence import signal_independence_mask
+from src.quantbuild.utils.signal_independence import (
+    component_signal_independence_masks,
+    signal_independence_mask,
+)
 
 
 STRATEGY_ID = "bb_only"
@@ -117,8 +120,13 @@ def collect_bb_entry_signals(
     atr_series = compute_atr(data, period=14)
     bands = compute_bb_bands(data, bollinger_cfg)
     long_raw, short_raw = detect_bb_component_observations(data, bands)
-    long_ind = apply_independence_to_signals(long_raw, data, atr_series, indep_cfg)
-    short_ind = apply_independence_to_signals(short_raw, data, atr_series, indep_cfg)
+    long_ind, short_ind = component_signal_independence_masks(
+        (long_raw, short_raw),
+        data["close"],
+        atr_series,
+        min_bars_gap=int(indep_cfg.get("min_bars_gap", 4)),
+        min_atr_distance=float(indep_cfg.get("min_atr_distance", 1.5)),
+    )
 
     entries: List[Dict[str, Any]] = []
     for i in range(len(data)):
