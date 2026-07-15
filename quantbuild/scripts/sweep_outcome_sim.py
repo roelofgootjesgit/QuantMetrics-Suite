@@ -3,7 +3,7 @@ Post-process ENTER sweep_research events: simulate SL/TP/timeout on M5 OHLC.
 
 Run from quantbuild/:
   $env:PYTHONPATH=".../quantbuild/src"
-  python scripts/sweep_outcome_sim.py
+  python scripts/sweep_outcome_sim.py --year 2024
 """
 
 from __future__ import annotations
@@ -289,7 +289,7 @@ def main() -> int:
     p.add_argument(
         "--year",
         type=int,
-        default=None,
+        required=True,
         help="Calendar year window (must match sweep_detector --year). Required for valid iloc alignment.",
     )
     p.add_argument("--symbol", default="XAUUSD")
@@ -303,19 +303,10 @@ def main() -> int:
     pq_path = args.parquet if args.parquet.is_absolute() else ROOT / args.parquet
     out_path = args.out if args.out.is_absolute() else ROOT / args.out
 
-    if args.year is None:
-        warnings.warn(
-            "No --year set: loading full parquet. sweep_bar_index/displacement_bar_index "
-            "from sweep_detector are relative to the year slice — outcomes may be invalid.",
-            UserWarning,
-            stacklevel=2,
-        )
-        df = pd.read_parquet(pq_path)
-    else:
-        start = datetime(int(args.year), 1, 1, tzinfo=timezone.utc)
-        end = datetime(int(args.year), 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-        base = pq_path.parent.parent
-        df = load_parquet(base, args.symbol, "5m", start=start, end=end)
+    start = datetime(int(args.year), 1, 1, tzinfo=timezone.utc)
+    end = datetime(int(args.year), 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    base = pq_path.parent.parent
+    df = load_parquet(base, args.symbol, "5m", start=start, end=end)
 
     df = df.sort_index()
     if not isinstance(df.index, pd.DatetimeIndex):
