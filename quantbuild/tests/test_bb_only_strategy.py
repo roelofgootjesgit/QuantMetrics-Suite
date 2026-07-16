@@ -1,10 +1,13 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from src.quantbuild.strategies import bb_only as bb_module
 from src.quantbuild.strategies.bb_only import (
     apply_independence_to_signals,
     collect_bb_entry_signals,
@@ -34,6 +37,22 @@ def _trend_down_through_bands(n: int = 80) -> pd.DataFrame:
             "open": close,
             "high": close + 0.0002,
             "low": close - 0.0002,
+            "close": close,
+        },
+        index=dates,
+    )
+
+
+def _bb_outlier_df(n: int = 120) -> pd.DataFrame:
+    dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+    close = np.full(n, 1.10) + np.linspace(0, 0.0005, n)
+    close[40] = 1.095
+    close[70] = 1.1055
+    return pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 0.0001,
+            "low": close - 0.0001,
             "close": close,
         },
         index=dates,
@@ -72,6 +91,30 @@ class TestBBOnlySignals:
         for a, b in zip(indices, indices[1:]):
             assert b - a >= 4
 
+    def test_collect_entries_filters_opposite_direction_cluster(self, monkeypatch):
+        df = _eurusd_df(40, seed=3)
+        lower = pd.Series(df["close"] - 1.0, index=df.index)
+        upper = pd.Series(df["close"] + 1.0, index=df.index)
+        mid = pd.Series(1.0, index=df.index)
+        lower.iloc[20] = float(df["close"].iloc[20]) + 0.001
+        upper.iloc[21] = float(df["close"].iloc[21]) - 0.001
+        bands = pd.DataFrame({"lower": lower, "mid": mid, "upper": upper}, index=df.index)
+        monkeypatch.setattr(bb_module, "compute_bb_bands", lambda data, cfg: bands)
+        monkeypatch.setattr(
+            bb_module,
+            "compute_atr",
+            lambda data, period=14: pd.Series(0.001, index=data.index),
+        )
+        strat = {
+            "bollinger": {"length": 20, "stddev": 2.0},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+        }
+
+        entries = collect_bb_entry_signals(df, strat)
+
+        assert [e["bar_index"] for e in entries] == [20]
+        assert entries[0]["direction"] == "LONG"
+
 
 class TestBBMidlineSimulator:
     def test_long_hits_midline(self):
@@ -98,6 +141,27 @@ class TestBBMidlineSimulator:
         assert res["exit_reason"] == "midline"
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
+
+    def test_long_hits_midline_on_intrabar_touch(self):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, 0.95)
+        high = close + 0.001
+        low = close - 0.001
+        high[11] = 1.001
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+        atr = np.full(n, 0.01)
+
+        res = simulate_bb_midline_trade(
+            df, 10, "LONG", mid=mid, atr_arr=atr, sl_atr_mult=5.0, time_exit_bars=5
+        )
+
+        assert res["exit_reason"] == "midline"
+        assert res["exit_bar_idx"] == 11
 
     def test_sl_before_midline(self):
         n = 30
@@ -147,3 +211,44 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_nested_spread_block_preserves_candidate_funnel(self, tmp_path):
+        from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
+
+        df = _bb_outlier_df(150)
+        strategy = {
+            "bollinger": {"length": 20, "stddev": 2.0},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 0.1}},
+        }
+        expected_candidates = collect_bb_entry_signals(df, strategy)
+        assert expected_candidates
+        out = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": strategy,
+            "exit": {"time_exit_bars": 32},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(out),
+            },
+        }
+
+        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+        candidates = [ev for ev in events if ev["event_type"] == "candidate_signal"]
+        no_actions = [
+            ev
+            for ev in events
+            if ev["event_type"] == "trade_action"
+            and ev["payload"]["decision"] == "NO_ACTION"
+            and ev["payload"]["reason"] == "spread_too_high"
+        ]
+        assert len(candidates) == len(expected_candidates)
+        assert len(no_actions) == len(expected_candidates)
