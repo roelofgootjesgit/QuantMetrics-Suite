@@ -367,6 +367,87 @@ class TestValidator(unittest.TestCase):
             error_messages = [issue.message for issue in report.issues if issue.level == "error"]
             self.assertIn("invalid_run_id", error_messages)
 
+    def test_null_payload_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = {
+                "event_id": "00000000-0000-0000-0000-000000000101",
+                "event_type": "trade_action",
+                "event_version": 1,
+                "timestamp_utc": "2026-03-29T18:00:03Z",
+                "ingested_at_utc": "2026-03-29T18:00:03Z",
+                "source_system": "quantbuild",
+                "source_component": "decision_engine",
+                "environment": "paper",
+                "run_id": "run_null_payload",
+                "session_id": "session_null_payload",
+                "source_seq": 1,
+                "trace_id": "trace_null_payload",
+                "decision_cycle_id": "dc_null_payload",
+                "severity": "info",
+                "payload": None,
+            }
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+            self.assertIn("payload_not_object", error_messages)
+
+    def test_null_required_payload_field_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = {
+                "event_id": "00000000-0000-0000-0000-000000000102",
+                "event_type": "trade_action",
+                "event_version": 1,
+                "timestamp_utc": "2026-03-29T18:00:03Z",
+                "ingested_at_utc": "2026-03-29T18:00:03Z",
+                "source_system": "quantbuild",
+                "source_component": "decision_engine",
+                "environment": "paper",
+                "run_id": "run_null_payload_field",
+                "session_id": "session_null_payload_field",
+                "source_seq": 1,
+                "trace_id": "trace_null_payload_field",
+                "decision_cycle_id": "dc_null_payload_field",
+                "severity": "info",
+                "payload": {"decision": None, "reason": "no_setup"},
+            }
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+            self.assertIn("missing_payload_field[trade_action]: decision", error_messages)
+
+    def test_invalid_timestamp_reports_error_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir)
+            event_file = path / "events.jsonl"
+            event = {
+                "event_id": "00000000-0000-0000-0000-000000000103",
+                "event_type": "trade_action",
+                "event_version": 1,
+                "timestamp_utc": "not-a-timestamp",
+                "ingested_at_utc": "2026-03-29T18:00:03Z",
+                "source_system": "quantbuild",
+                "source_component": "decision_engine",
+                "environment": "paper",
+                "run_id": "run_bad_timestamp",
+                "session_id": "session_bad_timestamp",
+                "source_seq": 1,
+                "trace_id": "trace_bad_timestamp",
+                "decision_cycle_id": "dc_bad_timestamp",
+                "severity": "info",
+                "payload": {"decision": "NO_ACTION", "reason": "no_setup"},
+            }
+            event_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+            report = validate_path(path)
+            error_messages = [issue.message for issue in report.issues if issue.level == "error"]
+            self.assertIn("invalid_timestamp_utc", error_messages)
+
     def test_source_seq_must_be_strictly_increasing_per_component_stream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir)
