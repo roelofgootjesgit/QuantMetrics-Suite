@@ -1,6 +1,8 @@
 """Tests for BB-only strategy signal logic and midline simulator."""
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -193,3 +195,44 @@ class TestBBOnlyBacktestEngine:
         if trades and ql_file.is_file():
             lines = [ln for ln in ql_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
             assert len(lines) >= len(trades) * 2
+
+    def test_nested_spread_block_preserves_candidate_funnel(self, tmp_path):
+        from src.quantbuild.strategies.bb_only_engine import run_bb_only_backtest
+
+        df = _trend_down_through_bands(150)
+        strategy = {
+            "bollinger": {"length": 20, "stddev": 2.0},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 1.5},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 0.1}},
+        }
+        expected_candidates = collect_bb_entry_signals(df, strategy)
+        assert expected_candidates
+        out = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-BB-MECH-001-TEST",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": strategy,
+            "exit": {"time_exit_bars": 32},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(out),
+            },
+        }
+
+        trades = run_bb_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+        candidates = [ev for ev in events if ev["event_type"] == "candidate_signal"]
+        no_actions = [
+            ev
+            for ev in events
+            if ev["event_type"] == "trade_action"
+            and ev["payload"]["decision"] == "NO_ACTION"
+            and ev["payload"]["reason"] == "spread_too_high"
+        ]
+        assert len(candidates) == len(expected_candidates)
+        assert len(no_actions) == len(expected_candidates)

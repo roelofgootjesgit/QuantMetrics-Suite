@@ -144,3 +144,47 @@ class TestMacdOnly:
         events = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
         component = [ev for ev in events if ev["event_type"] == "component_observed"][0]
         assert component["payload"]["macd_cross_velocity"] == 0.05
+
+    def test_spread_block_preserves_candidate_funnel(self, tmp_path):
+        close = np.concatenate([np.linspace(1.10, 1.12, 60), np.linspace(1.12, 1.08, 60)])
+        dates = pd.date_range("2024-01-01", periods=len(close), freq="15min", tz="UTC")
+        df = pd.DataFrame(
+            {"open": close, "high": close + 0.0001, "low": close - 0.0001, "close": close},
+            index=dates,
+        )
+        strategy = {
+            "macd": {"fast": 5, "slow": 10, "signal": 3},
+            "signal_independence": {"min_bars_gap": 4, "min_atr_distance": 0.0},
+        }
+        expected_candidates = collect_macd_entry_signals(df, strategy)
+        assert expected_candidates
+        out = tmp_path / "events.jsonl"
+        cfg = {
+            "experiment_id": "EXP-MACD-MECH-001-TEST",
+            "broker": {"mock_spread": 0.00010},
+            "strategy": strategy,
+            "exit": {"time_exit_bars": 8},
+            "risk": {"sl_atr_mult": 2.0, "max_concurrent": 1, "max_daily_loss_r": 99.0},
+            "guards": {"spread": {"enabled": True, "max_spread_pips": 0.1}},
+            "quantlog": {
+                "enabled": True,
+                "environment": "backtest",
+                "base_path": str(tmp_path / "ql"),
+                "consolidated_run_file": str(out),
+            },
+        }
+
+        trades = macd_engine_module.run_macd_only_backtest(cfg, df, symbol="EURUSD")
+
+        assert trades == []
+        events = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+        candidates = [ev for ev in events if ev["event_type"] == "candidate_signal"]
+        no_actions = [
+            ev
+            for ev in events
+            if ev["event_type"] == "trade_action"
+            and ev["payload"]["decision"] == "NO_ACTION"
+            and ev["payload"]["reason"] == "spread_too_high"
+        ]
+        assert len(candidates) == len(expected_candidates)
+        assert len(no_actions) == len(expected_candidates)
