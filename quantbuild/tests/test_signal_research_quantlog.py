@@ -137,3 +137,4 @@ def test_component_observed_payload_required_keys() -> None:
         "regime_at_signal",
     ):
         assert key in p
+    assert p["signal_is_independent"] is False
