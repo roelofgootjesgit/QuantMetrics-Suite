@@ -1,7 +1,10 @@
 """Unit tests for signal independence filter."""
 import pandas as pd
 
-from src.quantbuild.utils.signal_independence import signal_independence_mask
+from src.quantbuild.utils.signal_independence import (
+    component_signal_independence_masks,
+    signal_independence_mask,
+)
 
 
 def _mask(
@@ -77,3 +80,20 @@ class TestSignalIndependence:
         )
         assert mask.iloc[0]
         assert mask.iloc[4]
+
+    def test_component_masks_filter_cross_direction_clusters(self):
+        close = pd.Series([100.0, 100.0, 100.0, 110.0, 100.0], dtype=float)
+        atr = pd.Series([1.0] * 5, dtype=float)
+        long_raw = pd.Series([False, True, False, False, False], dtype=bool)
+        short_raw = pd.Series([False, False, True, False, False], dtype=bool)
+
+        long_ind, short_ind = component_signal_independence_masks(
+            (long_raw, short_raw),
+            close,
+            atr,
+            min_bars_gap=4,
+            min_atr_distance=0.0,
+        )
+
+        assert long_ind.iloc[1]
+        assert not short_ind.iloc[2]
