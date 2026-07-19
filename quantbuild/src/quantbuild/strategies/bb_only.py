@@ -218,12 +218,12 @@ def simulate_bb_midline_trade(
             favorable = hi - entry_price
             adverse = entry_price - lo
             sl_hit = lo <= sl
-            mid_hit = close_arr[j] >= mid_v
+            mid_hit = hi >= mid_v
         else:
             favorable = entry_price - lo
             adverse = hi - entry_price
             sl_hit = hi >= sl
-            mid_hit = close_arr[j] <= mid_v
+            mid_hit = lo <= mid_v
 
         max_favorable = max(max_favorable, favorable)
         max_adverse = max(max_adverse, adverse)

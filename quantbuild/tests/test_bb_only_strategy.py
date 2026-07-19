@@ -117,6 +117,45 @@ class TestBBMidlineSimulator:
         assert res["hit_midline_before_sl"] is True
         assert res["bars_to_midline"] is not None
 
+    @pytest.mark.parametrize(
+        ("direction", "entry", "wick_column", "wick_price"),
+        [
+            ("LONG", 0.95, "high", 1.001),
+            ("SHORT", 1.05, "low", 0.999),
+        ],
+    )
+    def test_midline_exit_uses_intrabar_touch(
+        self, direction, entry, wick_column, wick_price
+    ):
+        n = 20
+        dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
+        close = np.full(n, entry)
+        high = close + 0.001
+        low = close - 0.001
+        if wick_column == "high":
+            high[6] = wick_price
+        else:
+            low[6] = wick_price
+        mid = np.full(n, 1.0)
+        df = pd.DataFrame(
+            {"open": close, "high": high, "low": low, "close": close},
+            index=dates,
+        )
+
+        res = simulate_bb_midline_trade(
+            df,
+            5,
+            direction,
+            mid=mid,
+            atr_arr=np.full(n, 0.01),
+            sl_atr_mult=10.0,
+            time_exit_bars=10,
+        )
+
+        assert res["exit_reason"] == "midline"
+        assert res["exit_bar_idx"] == 6
+        assert res["exit_price"] == pytest.approx(1.0)
+
     def test_sl_before_midline(self):
         n = 30
         dates = pd.date_range("2024-01-01", periods=n, freq="15min", tz="UTC")
