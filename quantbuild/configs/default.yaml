@@ -86,12 +86,14 @@ news:
       language: en
 
 # After backtest: copy consolidated QuantLog + config snapshot to quantmetrics_os/runs/ (QuantOS).
-# Off by default. Set enabled: true; optional experiment_id, role: baseline|variant|single.
+# Off by default. Set enabled: true; optional experiment_id, role: baseline|variant|single,
+# run_slot for multi-run experiments under the same experiment/role.
 # Disable: artifacts.enabled: false or env QUANTMETRICS_ARTIFACTS=0
 # artifacts:
 #   enabled: false
 #   experiment_id: null
 #   role: single
+#   run_slot: null
 #   quantmetrics_os_root: null
 #   bundle_analytics: true
 #   analytics_recent_seconds: 900

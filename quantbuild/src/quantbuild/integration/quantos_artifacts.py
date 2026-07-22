@@ -102,6 +102,11 @@ def invoke_collect_run_artifacts(cfg: dict[str, Any], ql_emitter: QuantLogEmitte
         "--analytics-recent-seconds",
         str(recent_sec),
     ]
+    run_slot = str(art.get("run_slot") or "").strip()
+    if run_slot:
+        cmd.extend(["--run-slot", run_slot])
+    if bool(art.get("overwrite")):
+        cmd.append("--overwrite")
     if config_yaml is not None and config_yaml.is_file():
         cmd.extend(["--config-yaml", str(config_yaml)])
     if resolved_sidecar is not None and resolved_sidecar.is_file():

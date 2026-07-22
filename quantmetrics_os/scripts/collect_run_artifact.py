@@ -30,6 +30,34 @@ def _sanitize_segment(name: str) -> str:
     return s or "unnamed"
 
 
+def _existing_run_id(dest: Path) -> str | None:
+    run_info = dest / "run_info.json"
+    if not run_info.is_file():
+        return None
+    try:
+        data = json.loads(run_info.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("run_id")
+    return str(value).strip() if value else None
+
+
+def _has_existing_bundle(dest: Path) -> bool:
+    return any((dest / name).exists() for name in ("quantlog_events.jsonl", "run_info.json"))
+
+
+def _analytics_dest_name(filename: str, run_id: str) -> str | None:
+    if filename in {"inference_report.json", "mfe_timing_report.json"}:
+        return None
+    if not filename.startswith(f"{run_id}_"):
+        return filename
+    if filename.endswith("_inference_report.json"):
+        return "inference_report.json"
+    if filename.endswith("_mfe_timing_report.json"):
+        return "mfe_timing_report.json"
+    return filename
+
+
 def discover_quantmetrics_os_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit.resolve()
@@ -52,6 +80,8 @@ def collect(
     bundle_analytics: bool,
     analytics_output_dir: Path | None,
     analytics_recent_seconds: int,
+    run_slot: str | None = None,
+    overwrite: bool = False,
 ) -> Path:
     role_norm = _sanitize_segment(role)
     if not role_norm:
@@ -59,6 +89,17 @@ def collect(
 
     runs = quantmetrics_os_root / "runs"
     dest = runs / _sanitize_segment(experiment_id) / role_norm
+    slot_norm = _sanitize_segment(run_slot) if run_slot else ""
+    if slot_norm:
+        dest = dest / slot_norm
+
+    existing = _existing_run_id(dest)
+    if not overwrite and _has_existing_bundle(dest) and existing != run_id:
+        detail = f" for run_id {existing!r}" if existing else ""
+        raise FileExistsError(
+            f"Refusing to overwrite existing QuantOS artifact bundle{detail}: {dest}. "
+            "Use --run-slot for multi-run experiments or --overwrite for an intentional replacement."
+        )
     dest.mkdir(parents=True, exist_ok=True)
 
     jsonl_src = quantbuild_root / "data" / "quantlog_events" / "runs" / f"{run_id}.jsonl"
@@ -81,7 +122,13 @@ def collect(
     analytics_dir = dest / "analytics"
     if bundle_analytics and analytics_output_dir is not None and analytics_output_dir.is_dir():
         analytics_dir.mkdir(parents=True, exist_ok=True)
+        for canonical in ("inference_report.json", "mfe_timing_report.json"):
+            try:
+                (analytics_dir / canonical).unlink()
+            except FileNotFoundError:
+                pass
         cutoff = time.time() - max(60, analytics_recent_seconds)
+        copied_names: set[str] = set()
         for p in sorted(analytics_output_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
             if not p.is_file():
                 continue
@@ -89,12 +136,13 @@ def collect(
                 continue
             if p.suffix.lower() not in {".txt", ".md", ".json"}:
                 continue
-            dest_name = p.name
-            if p.name.endswith("_inference_report.json"):
-                dest_name = "inference_report.json"
-            elif p.name.endswith("_mfe_timing_report.json"):
-                dest_name = "mfe_timing_report.json"
+            dest_name = _analytics_dest_name(p.name, run_id)
+            if dest_name is None:
+                continue
+            if dest_name in copied_names:
+                continue
             shutil.copy2(p, analytics_dir / dest_name)
+            copied_names.add(dest_name)
             analytics_copied += 1
             if analytics_copied >= 40:
                 break
@@ -103,6 +151,7 @@ def collect(
         "run_id": run_id,
         "experiment_id": experiment_id,
         "role": role_norm,
+        "run_slot": slot_norm or None,
         "collected_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "quantbuild_root": str(quantbuild_root.resolve()),
         "quantlog_source": str(jsonl_src.resolve()),
@@ -129,6 +178,16 @@ def main() -> int:
         help="Run role folder name under runs/<experiment-id>/ (will be sanitized).",
     )
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--run-slot",
+        default=None,
+        help="Optional subfolder under runs/<experiment-id>/<role>/ for multi-run experiments.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Intentionally replace an existing bundle for a different run_id.",
+    )
     parser.add_argument("--quantbuild-root", type=Path, default=None)
     parser.add_argument("--quantmetrics-os-root", type=Path, default=None)
     parser.add_argument("--config-yaml", type=Path, default=None)
@@ -172,6 +231,8 @@ def main() -> int:
         bundle_analytics=bool(args.bundle_analytics),
         analytics_output_dir=args.analytics_output_dir,
         analytics_recent_seconds=int(args.analytics_recent_seconds),
+        run_slot=args.run_slot,
+        overwrite=bool(args.overwrite),
     )
     print(str(dest.resolve()))
     return 0
