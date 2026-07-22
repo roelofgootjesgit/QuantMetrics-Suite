@@ -27,4 +27,4 @@ quantlog:
 artifacts:
   enabled: true
   experiment_id: EXP-003
-  role: variant
+  role: variant_xauusd
