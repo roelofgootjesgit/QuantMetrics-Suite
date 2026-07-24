@@ -807,10 +807,9 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
         size_mult = float(regime_profile.get("position_size_mult", 1.0)) * float(news_boost)
         if abs(size_mult - 1.0) > 1e-12:
             result = dict(result)
+            # Portfolio contribution scales with size; path excursion R (mae/mfe) must not.
             result["profit_r"] = float(result["profit_r"]) * size_mult
             result["profit_usd"] = float(result["profit_usd"]) * size_mult
-            result["mae_r"] = float(result["mae_r"]) * size_mult
-            result["mfe_r"] = float(result["mfe_r"]) * size_mult
 
         trade_ref = f"BT-{trace_id[:8]}"
         sim_vol = float(risk_cfg.get("backtest_sim_volume_lots", 1.0))
