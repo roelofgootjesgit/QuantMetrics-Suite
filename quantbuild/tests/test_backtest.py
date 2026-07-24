@@ -254,6 +254,74 @@ class TestBacktestQuantLog:
         rows = json.loads(series_path.read_text(encoding="utf-8"))["trades"]
         assert [float(r["pnl_r"]) for r in rows] == [float(t.profit_r) for t in trades]
 
+    def test_position_size_mult_scales_pnl_not_mae_mfe(self, tmp_path, monkeypatch):
+        """position_size_mult scales pnl_r/profit; path mae_r/mfe_r stay size-invariant."""
+        import src.quantbuild.backtest.engine as eng
+
+        df = _make_ohlcv(320)
+        precomputed = pd.Series("trend", index=df.index)
+
+        def fake_load_parquet(base_path, symbol, timeframe, start=None, end=None):
+            if timeframe == "15m":
+                return df
+            return pd.DataFrame()
+
+        def fake_run_sqe(data, direction, sqe_cfg, _precomputed_df=None):
+            out = pd.Series(False, index=data.index)
+            if direction == "LONG":
+                out.iloc[150] = True
+            return out
+
+        monkeypatch.setattr(eng, "load_parquet", fake_load_parquet)
+        monkeypatch.setattr(eng, "ensure_data", lambda **kwargs: df)
+        monkeypatch.setattr(eng, "run_sqe_conditions", fake_run_sqe)
+
+        def _closed_metrics(run_id: str, size_mult: float):
+            ql_dir = tmp_path / f"quantlog_{run_id}"
+            cfg = {
+                "symbol": "XAUUSD",
+                "timeframes": ["15m"],
+                "data": {"base_path": str(tmp_path / "data")},
+                "backtest": {"default_period_days": 365, "tp_r": 2.0, "sl_r": 1.0, "session_mode": "extended"},
+                "risk": {"max_daily_loss_r": 99.0, "equity_kill_switch_pct": 99.0},
+                "strategy": {},
+                "regime_profiles": {"trend": {"position_size_mult": size_mult}},
+                "quantlog": {
+                    "enabled": True,
+                    "base_path": str(ql_dir),
+                    "environment": "backtest",
+                    "run_id": run_id,
+                    "session_id": f"{run_id}_session",
+                    "consolidated_run_file": True,
+                },
+                "news": {"enabled": False},
+            }
+            trades = run_backtest(cfg, precomputed_regime=precomputed)
+            assert len(trades) >= 1
+            jsonl_path = ql_dir / "runs" / f"{run_id}.jsonl"
+            assert jsonl_path.is_file(), f"missing consolidated {jsonl_path}"
+            closed = [
+                json.loads(line)
+                for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            closed_ev = next(e for e in closed if e["event_type"] == "trade_closed")
+            pl = closed_ev["payload"]
+            return {
+                "pnl_r": float(pl["pnl_r"]),
+                "mae_r": float(pl["mae_r"]),
+                "mfe_r": float(pl["mfe_r"]),
+                "trade_profit_r": float(trades[0].profit_r),
+            }
+
+        full = _closed_metrics("bt_size_1", 1.0)
+        half = _closed_metrics("bt_size_half", 0.5)
+
+        assert half["mae_r"] == pytest.approx(full["mae_r"])
+        assert half["mfe_r"] == pytest.approx(full["mfe_r"])
+        assert half["pnl_r"] == pytest.approx(full["pnl_r"] * 0.5)
+        assert half["trade_profit_r"] == pytest.approx(full["trade_profit_r"] * 0.5)
+
 
 class TestSystemModeBacktest:
     """PRODUCTION vs EDGE_DISCOVERY: same candidate, regime skip blocks only in production."""
