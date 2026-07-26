@@ -233,6 +233,31 @@ def _tp_price(entry: float, sl: float, direction: str, spec: Dict[str, Any]) -> 
     return entry - r * risk
 
 
+def _resolve_fvg_limit_bar(
+    *,
+    low: float,
+    high: float,
+    close: float,
+    mid: float,
+    gap_lo: float,
+    gap_hi: float,
+) -> Optional[str]:
+    """Resolve one M15 bar for a resting FVG-mid limit before entry.
+
+    Resting limit fills are path-based: if the bar trades through ``mid``,
+    the order fills even when the same bar later closes outside the FVG zone.
+    Close-outside invalidation only cancels still-unfilled setups
+    (``invalidation.before_entry.rule = m15_close_outside_fvg_zone``).
+
+    Returns ``\"fill\"``, ``\"invalidate\"``, or ``None`` to keep waiting.
+    """
+    if low <= mid <= high:
+        return "fill"
+    if close < gap_lo or close > gap_hi:
+        return "invalidate"
+    return None
+
+
 def discover_setups(
     df: pd.DataFrame,
     spec: Dict[str, Any],
@@ -397,15 +422,20 @@ def discover_setups(
             for k in range(f_bar + 1, min(f_bar + 1 + expire_bars, n)):
                 if not _in_hhmm_window(df.index[k], tr_start, tr_end):
                     continue
-                # close outside FVG zone → cancel
-                c_ = float(closes[k])
-                if c_ < gap_lo or c_ > gap_hi:
+                outcome = _resolve_fvg_limit_bar(
+                    low=float(lows[k]),
+                    high=float(highs[k]),
+                    close=float(closes[k]),
+                    mid=mid,
+                    gap_lo=gap_lo,
+                    gap_hi=gap_hi,
+                )
+                if outcome == "fill":
+                    filled_at = k
+                    break
+                if outcome == "invalidate":
                     filled_at = None
                     invalidated = True
-                    break
-                lo_, hi_ = float(lows[k]), float(highs[k])
-                if lo_ <= mid <= hi_:
-                    filled_at = k
                     break
             if filled_at is None:
                 _emit_setup_rejected(
@@ -513,14 +543,20 @@ def discover_setups(
             for k in range(f_bar + 1, min(f_bar + 1 + expire_bars, n)):
                 if not _in_hhmm_window(df.index[k], tr_start, tr_end):
                     continue
-                c_ = float(closes[k])
-                if c_ > gap_hi or c_ < gap_lo:
+                outcome = _resolve_fvg_limit_bar(
+                    low=float(lows[k]),
+                    high=float(highs[k]),
+                    close=float(closes[k]),
+                    mid=mid,
+                    gap_lo=gap_lo,
+                    gap_hi=gap_hi,
+                )
+                if outcome == "fill":
+                    filled_at = k
+                    break
+                if outcome == "invalidate":
                     filled_at = None
                     invalidated = True
-                    break
-                lo_, hi_ = float(lows[k]), float(highs[k])
-                if lo_ <= mid <= hi_:
-                    filled_at = k
                     break
             if filled_at is None:
                 _emit_setup_rejected(
