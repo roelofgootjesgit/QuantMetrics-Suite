@@ -39,19 +39,23 @@ class OrderBlockModule(BaseModule):
         bullish_ob = np.zeros(n, dtype=bool)
         bearish_ob = np.zeros(n, dtype=bool)
 
+        # Candidate OB candle is i; confirmation requires the next n_c bars.
+        # Stamp on the last confirmation bar so the flag is causal (known only
+        # after that forward window closes), not on i with future knowledge.
         for i in range(n_c + 1, n - n_c):
             fwd_high = high[i + 1: i + 1 + n_c].max()
             fwd_low = low[i + 1: i + 1 + n_c].min()
+            confirm = i + n_c
 
             if close[i] < openp[i] and fwd_high > high[i]:
                 move = (fwd_high - low[i]) / low[i] if low[i] > 0 else 0
                 if move >= move_pct:
-                    bearish_ob[i] = True
+                    bearish_ob[confirm] = True
 
             if close[i] > openp[i] and fwd_low < low[i]:
                 move = (high[i] - fwd_low) / high[i] if high[i] > 0 else 0
                 if move >= move_pct:
-                    bullish_ob[i] = True
+                    bullish_ob[confirm] = True
 
         df["bullish_ob"] = bullish_ob
         df["bearish_ob"] = bearish_ob

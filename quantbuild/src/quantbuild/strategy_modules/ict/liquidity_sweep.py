@@ -53,20 +53,23 @@ class LiquiditySweepModule(BaseModule):
             h = high_arr[i]
             l_ = low_arr[i]
 
+            # Stamp on the reclaim bar (j), not the sweep bar (i). Tagging the
+            # sweep bar after scanning future bars is look-ahead: as-of the sweep
+            # close the reclaim is not yet known.
             if l_ <= sl_val * (1 - thresh):
                 end_j = min(i + rev_n + 1, n)
                 for j in range(i, end_j):
                     if high_arr[j] >= sl_val * (1 + thresh):
-                        bullish_sweep[i] = True
-                        swept_low[i] = sl_val
+                        bullish_sweep[j] = True
+                        swept_low[j] = sl_val
                         break
 
             if h >= sh * (1 + thresh):
                 end_j = min(i + rev_n + 1, n)
                 for j in range(i, end_j):
                     if low_arr[j] <= sh * (1 - thresh):
-                        bearish_sweep[i] = True
-                        swept_high[i] = sh
+                        bearish_sweep[j] = True
+                        swept_high[j] = sh
                         break
 
         df["bullish_sweep"] = bullish_sweep

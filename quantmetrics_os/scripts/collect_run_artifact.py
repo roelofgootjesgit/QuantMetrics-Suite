@@ -82,6 +82,9 @@ def collect(
     if bundle_analytics and analytics_output_dir is not None and analytics_output_dir.is_dir():
         analytics_dir.mkdir(parents=True, exist_ok=True)
         cutoff = time.time() - max(60, analytics_recent_seconds)
+        # Newest-first. Canonical renames must bind to this run_id — otherwise
+        # an older sibling report overwrites inference_report.json / mfe_timing
+        # and the ledger decision attaches the wrong run's analytics.
         for p in sorted(analytics_output_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
             if not p.is_file():
                 continue
@@ -91,10 +94,17 @@ def collect(
                 continue
             dest_name = p.name
             if p.name.endswith("_inference_report.json"):
+                if not p.name.startswith(f"{run_id}_"):
+                    continue
                 dest_name = "inference_report.json"
             elif p.name.endswith("_mfe_timing_report.json"):
+                if not p.name.startswith(f"{run_id}_"):
+                    continue
                 dest_name = "mfe_timing_report.json"
-            shutil.copy2(p, analytics_dir / dest_name)
+            dest_path = analytics_dir / dest_name
+            if dest_path.exists():
+                continue
+            shutil.copy2(p, dest_path)
             analytics_copied += 1
             if analytics_copied >= 40:
                 break
