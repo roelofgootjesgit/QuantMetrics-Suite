@@ -45,10 +45,12 @@ class FairValueGapModule(BaseModule):
         prev_prev_high[:2] = np.nan
         prev_prev_high[2:] = high[:-2]
 
+        # bull_mask[k] is True when candle k completes the 3-candle FVG
+        # (low[k] vs high[k-2]). Tag the completing candle — shifting left onto
+        # the middle candle is one-bar look-ahead before the gap exists.
         bull_gap = (low - prev_prev_high) / np.where(prev_prev_high != 0, prev_prev_high, np.nan)
         bull_mask = (low > prev_prev_high) & (bull_gap >= min_gap)
-        bullish_fvg = np.zeros(n, dtype=bool)
-        bullish_fvg[1:-1] = bull_mask[2:]
+        bullish_fvg = np.asarray(bull_mask, dtype=bool)
 
         prev_prev_low = np.empty(n)
         prev_prev_low[:2] = np.nan
@@ -56,19 +58,18 @@ class FairValueGapModule(BaseModule):
 
         bear_gap = (prev_prev_low - high) / np.where(prev_prev_low != 0, prev_prev_low, np.nan)
         bear_mask = (high < prev_prev_low) & (bear_gap >= min_gap)
-        bearish_fvg = np.zeros(n, dtype=bool)
-        bearish_fvg[1:-1] = bear_mask[2:]
+        bearish_fvg = np.asarray(bear_mask, dtype=bool)
 
         # Quality 0–1: gap size vs cap (same validity window as in_*_fvg)
         bull_qual_form = np.zeros(n, dtype=np.float64)
         bear_qual_form = np.zeros(n, dtype=np.float64)
-        for j in range(1, n - 1):
+        for j in range(n):
             if bullish_fvg[j]:
-                g = bull_gap[j + 1]
+                g = bull_gap[j]
                 if np.isfinite(g) and g >= min_gap:
                     bull_qual_form[j] = min(1.0, float(g / cap_ratio))
             if bearish_fvg[j]:
-                g = bear_gap[j + 1]
+                g = bear_gap[j]
                 if np.isfinite(g) and g >= min_gap:
                     bear_qual_form[j] = min(1.0, float(g / cap_ratio))
 
