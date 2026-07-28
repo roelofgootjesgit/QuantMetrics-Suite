@@ -491,7 +491,14 @@ class LiveRunner:
         if self.dry_run or not self.broker.is_connected:
             return
 
-        broker_trades = self.broker.get_open_trades()
+        try:
+            broker_trades = self.broker.get_open_trades()
+        except Exception as e:
+            # API/auth/network failures must not look like "flat account" — that would
+            # unregister live positions, free capacity, and allow oversizing.
+            logger.error("Broker position sync failed; keeping local positions: %s", e)
+            return
+
         broker_ids = {t.trade_id for t in broker_trades}
         monitor_ids = {p.trade_id for p in self.position_monitor.all_positions}
 
@@ -991,6 +998,9 @@ class LiveRunner:
         bars_to_mfe: Optional[int] = None,
     ) -> None:
         """Emit ``trade_closed`` for lifecycle closure (P0-D). Uses ENTER registration when available."""
+        # Always accumulate daily R so max_daily_loss_r can actually trip.
+        self._daily_pnl_r += float(pnl_r)
+        self._daily_trade_count += 1
         if not self._quantlog:
             return
         meta = self._open_trade_quantlog.pop(trade_id, None)
