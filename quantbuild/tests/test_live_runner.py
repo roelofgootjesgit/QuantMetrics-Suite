@@ -162,6 +162,57 @@ class TestGuardrails:
         assert runner._daily_pnl_r == 0.0
         assert runner._daily_date == "2025-01-02"
 
+    def test_trade_closed_accumulates_daily_pnl_r(self):
+        """Closed trades must update daily R so max_daily_loss_r can trip."""
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        runner._quantlog = None
+        assert runner._check_daily_loss_limit()
+        runner._emit_trade_closed(
+            trade_id="T1",
+            exit_price=1990.0,
+            pnl_r=-1.5,
+            outcome="sl",
+            exit_tag="stop",
+            direction="LONG",
+        )
+        runner._emit_trade_closed(
+            trade_id="T2",
+            exit_price=1980.0,
+            pnl_r=-1.6,
+            outcome="sl",
+            exit_tag="stop",
+            direction="LONG",
+        )
+        assert runner._daily_pnl_r == pytest.approx(-3.1)
+        assert runner._daily_trade_count == 2
+        assert not runner._check_daily_loss_limit()
+
+    def test_broker_sync_preserves_positions_on_query_failure(self):
+        from src.quantbuild.execution.broker_oanda import BrokerQueryError
+        from src.quantbuild.models.trade import Position, TradeDirection
+
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        runner.dry_run = False
+        pos = Position(
+            trade_id="OPEN-1",
+            instrument="XAU_USD",
+            direction=TradeDirection.LONG,
+            entry_price=2000.0,
+            units=1.0,
+            current_price=2001.0,
+            unrealized_pnl=1.0,
+            sl=1990.0,
+            tp=2020.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        runner.position_monitor.add_position(pos)
+        mock_broker = MagicMock()
+        mock_broker.is_connected = True
+        mock_broker.get_open_trades.side_effect = BrokerQueryError("transient network failure")
+        runner.broker = mock_broker
+        runner._sync_positions_from_broker()
+        assert "OPEN-1" in {p.trade_id for p in runner.position_monitor.all_positions}
+
     def test_spread_guard_dry_run(self):
         runner = LiveRunner(_minimal_cfg(), dry_run=True)
         assert runner._check_spread_guard() is None

@@ -8,6 +8,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 logger = logging.getLogger(__name__)
 
 
+class BrokerQueryError(RuntimeError):
+    """Raised when a broker read fails and the caller must not treat the result as empty."""
+
+
 @dataclass
 class OrderResult:
     success: bool
@@ -211,7 +215,8 @@ class OandaBroker:
             return positions
         except Exception as e:
             logger.error("Get trades failed: %s", e)
-            return []
+            # Do not return [] — callers treat empty as "no open trades" and may wipe state.
+            raise BrokerQueryError(f"Oanda get_open_trades failed: {e}") from e
 
     def sync_positions(self, instrument: Optional[str] = None) -> List[OandaPosition]:
         return self.get_open_trades(instrument=instrument)
