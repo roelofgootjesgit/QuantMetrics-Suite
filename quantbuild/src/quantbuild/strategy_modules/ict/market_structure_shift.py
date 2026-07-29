@@ -27,10 +27,13 @@ class MarketStructureShiftModule(BaseModule):
         df = data.copy()
         lb = config.get("swing_lookback", 5)
         thresh = config.get("break_threshold_pct", 0.2) / 100.0
-        df["swing_high"] = df["high"].rolling(2 * lb + 1, center=True).max()
-        df["swing_low"] = df["low"].rolling(2 * lb + 1, center=True).min()
-        df["bullish_mss"] = (df["high"] >= df["swing_high"].shift(1) * (1 + thresh)) & (df["swing_high"].shift(1).notna())
-        df["bearish_mss"] = (df["low"] <= df["swing_low"].shift(1) * (1 - thresh)) & (df["swing_low"].shift(1).notna())
+        win = 2 * lb + 1
+        # Causal trailing extrema (no center=True). shift(1) excludes the
+        # current bar so break detection never uses future highs/lows.
+        df["swing_high"] = df["high"].rolling(win, center=False, min_periods=win).max().shift(1)
+        df["swing_low"] = df["low"].rolling(win, center=False, min_periods=win).min().shift(1)
+        df["bullish_mss"] = (df["high"] >= df["swing_high"] * (1 + thresh)) & df["swing_high"].notna()
+        df["bearish_mss"] = (df["low"] <= df["swing_low"] * (1 - thresh)) & df["swing_low"].notna()
         return df
 
     def check_entry_condition(self, data: pd.DataFrame, index: int, config: Dict, direction: str) -> bool:
