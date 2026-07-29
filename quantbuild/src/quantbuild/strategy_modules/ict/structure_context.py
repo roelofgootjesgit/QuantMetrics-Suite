@@ -12,10 +12,18 @@ from src.quantbuild.strategy_modules.ict.structure_labels import (
 def compute_structure_labels(
     data: pd.DataFrame, lookback: int = 30, pivot_bars: int = 2,
 ) -> pd.Series:
-    """Per bar: BULLISH_STRUCTURE (HH/HL), BEARISH_STRUCTURE (LH/LL), or RANGE."""
+    """Per bar: BULLISH_STRUCTURE (HH/HL), BEARISH_STRUCTURE (LH/LL), or RANGE.
+
+    Pivot highs/lows require ``pivot_bars`` bars on each side. Labels at bar ``i``
+    only consume pivots whose right-side confirmation is fully known by ``i``,
+    so the series is causal (no look-ahead into bars after ``i``).
+    """
     n = len(data)
-    high_roll = data["high"].rolling(2 * pivot_bars + 1, center=True, min_periods=pivot_bars + 1).max()
-    low_roll = data["low"].rolling(2 * pivot_bars + 1, center=True, min_periods=pivot_bars + 1).min()
+    window = 2 * pivot_bars + 1
+    # Full window required: partial centered windows would still be non-causal
+    # if stamped early, and are unused once we gate on confirmation below.
+    high_roll = data["high"].rolling(window, center=True, min_periods=window).max()
+    low_roll = data["low"].rolling(window, center=True, min_periods=window).min()
     is_pivot_high = ((data["high"] == high_roll) & high_roll.notna()).values
     is_pivot_low = ((data["low"] == low_roll) & low_roll.notna()).values
 
@@ -25,8 +33,12 @@ def compute_structure_labels(
 
     for i in range(lookback, n):
         start = max(0, i - lookback)
-        ph_vals = high_arr[start:i + 1][is_pivot_high[start:i + 1]]
-        pl_vals = low_arr[start:i + 1][is_pivot_low[start:i + 1]]
+        # Pivot at j is confirmed only once bars j..j+pivot_bars are known.
+        confirm_end = i - pivot_bars + 1
+        if confirm_end <= start:
+            continue
+        ph_vals = high_arr[start:confirm_end][is_pivot_high[start:confirm_end]]
+        pl_vals = low_arr[start:confirm_end][is_pivot_low[start:confirm_end]]
 
         if len(ph_vals) < 2 or len(pl_vals) < 2:
             continue

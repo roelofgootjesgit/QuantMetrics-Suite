@@ -87,3 +87,58 @@ class TestStructureContext:
         result = add_structure_context(_make_ohlcv(200), {"lookback": 30, "pivot_bars": 2})
         assert "structure_label" in result.columns
         assert "in_bullish_structure" in result.columns
+
+    def test_structure_labels_are_causal(self):
+        """Mutating bars after i must not change the label at i (no look-ahead)."""
+        df = _make_ohlcv(160, seed=7)
+        lookback, pivot_bars = 30, 2
+        full = compute_structure_labels(df, lookback=lookback, pivot_bars=pivot_bars)
+        flips = 0
+        for i in range(lookback, len(df) - pivot_bars - 1):
+            mutated = df.copy()
+            mutated.iloc[i + 1 :, mutated.columns.get_loc("high")] = (
+                mutated.iloc[i + 1 :]["high"].to_numpy() + 250.0
+            )
+            mutated.iloc[i + 1 :, mutated.columns.get_loc("low")] = (
+                mutated.iloc[i + 1 :]["low"].to_numpy() - 250.0
+            )
+            after = compute_structure_labels(mutated, lookback=lookback, pivot_bars=pivot_bars)
+            if str(after.iloc[i]) != str(full.iloc[i]):
+                flips += 1
+        assert flips == 0
+
+
+class TestMarketStructureShiftCausality:
+    def test_mss_signals_are_causal(self):
+        """Mutating bars after i must not change MSS flags at i (no look-ahead)."""
+        df = _make_ohlcv(200, seed=11)
+        cfg = {"swing_lookback": 5, "break_threshold_pct": 0.2}
+        full = MarketStructureShiftModule().calculate(df, cfg)
+        flips = 0
+        for i in range(20, len(df) - 6):
+            mutated = df.copy()
+            mutated.iloc[i + 1 :, mutated.columns.get_loc("high")] = (
+                mutated.iloc[i + 1 :]["high"].to_numpy() + 250.0
+            )
+            mutated.iloc[i + 1 :, mutated.columns.get_loc("low")] = (
+                mutated.iloc[i + 1 :]["low"].to_numpy() - 250.0
+            )
+            after = MarketStructureShiftModule().calculate(mutated, cfg)
+            if bool(after["bullish_mss"].iloc[i]) != bool(full["bullish_mss"].iloc[i]):
+                flips += 1
+            if bool(after["bearish_mss"].iloc[i]) != bool(full["bearish_mss"].iloc[i]):
+                flips += 1
+        assert flips == 0
+
+    def test_mss_swing_levels_ignore_future_bars(self):
+        df = _make_ohlcv(120, seed=3)
+        cfg = {"swing_lookback": 5, "break_threshold_pct": 0.2}
+        full = MarketStructureShiftModule().calculate(df, cfg)
+        i = 80
+        mutated = df.copy()
+        mutated.iloc[i + 1 :, mutated.columns.get_loc("high")] = (
+            mutated.iloc[i + 1 :]["high"].to_numpy() + 100.0
+        )
+        after = MarketStructureShiftModule().calculate(mutated, cfg)
+        assert after["swing_high"].iloc[i] == full["swing_high"].iloc[i]
+        assert after["swing_low"].iloc[i] == full["swing_low"].iloc[i]
