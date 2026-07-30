@@ -197,13 +197,32 @@ class OandaBroker:
             from oandapyV20.endpoints.trades import TradesList
             params = {"instrument": instrument} if instrument else {}
             response = self._client.request(TradesList(accountID=self.account_id, params=params))
+            trades_raw = response.get("trades", [])
+            # Oanda Trade.price is the average fill, not mark. Cache live mids so
+            # sync/UPL/exit-R paths do not treat entry as current_price.
+            mids: Dict[str, float] = {}
+            for t in trades_raw:
+                inst = str(t.get("instrument") or "")
+                if not inst or inst in mids:
+                    continue
+                px = self.get_current_price(inst)
+                if px and px.get("bid") is not None and px.get("ask") is not None:
+                    mids[inst] = (float(px["bid"]) + float(px["ask"])) / 2.0
+                else:
+                    logger.warning(
+                        "Mark price unavailable for %s; falling back to trade fill price",
+                        inst,
+                    )
             positions = []
-            for t in response.get("trades", []):
+            for t in trades_raw:
                 units = float(t.get("currentUnits", 0))
+                entry_price = float(t.get("price", 0))
+                inst = str(t.get("instrument") or "")
+                current_price = mids.get(inst, entry_price)
                 positions.append(OandaPosition(
-                    trade_id=t.get("id", ""), instrument=t.get("instrument", ""),
+                    trade_id=t.get("id", ""), instrument=inst,
                     direction="LONG" if units > 0 else "SHORT", units=abs(units),
-                    entry_price=float(t.get("price", 0)), current_price=float(t.get("price", 0)),
+                    entry_price=entry_price, current_price=current_price,
                     unrealized_pnl=float(t.get("unrealizedPL", 0)),
                     sl=float(t["stopLossOrder"]["price"]) if t.get("stopLossOrder") else None,
                     tp=float(t["takeProfitOrder"]["price"]) if t.get("takeProfitOrder") else None,
