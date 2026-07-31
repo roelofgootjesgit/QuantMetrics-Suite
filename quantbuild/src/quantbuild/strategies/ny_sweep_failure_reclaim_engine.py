@@ -2,7 +2,8 @@
 HYP-002 — NY Sweep Failure Reclaim (dedicated backtest engine).
 
 Hypothese staat los van HYP-001 (`ny_sweep_reversion_engine`): sweep zonder same-bar reclaim,
-classificatie via continuation-diepte over N bars, entry op reclaim-close binnen M bars.
+classificatie via continuation-diepte over N bars, daarna entry op reclaim-close binnen M bars
+(reclaim pas zoeken vanaf het classificatie-bar — geen look-ahead op de failure-window).
 Geen displacement/FVG in v1.0-run — alleen frequentie- en richting-pad naar vaste-R simulatie.
 """
 from __future__ import annotations
@@ -510,7 +511,13 @@ def _process_sweep_bar(
     if max_cont > c_max:
         result = "continuation"
     else:
-        for k in range(i + 1, min(i + 1 + m_rec, n)):
+        # Failure (max continuation within C) is only knowable at class_idx.
+        # Searching reclaim from i+1 and entering there look-aheads on the
+        # remaining failure-window bars. Require reclaim at/after class_idx,
+        # still bounded by the sweep-relative M-bar reclaim window.
+        reclaim_lo = class_idx
+        reclaim_hi = min(i + 1 + m_rec, n)
+        for k in range(reclaim_lo, reclaim_hi):
             if direction == "long":
                 if closes[k] > l_lo:
                     first_reclaim_k = k
@@ -551,7 +558,11 @@ def _process_sweep_bar(
     if result != "failure" or first_reclaim_k is None:
         return
 
-    k = first_reclaim_k
+    # Causal fill: never enter before the failure classification bar.
+    k = int(first_reclaim_k)
+    if k < class_idx:
+        return
+
     entry_price = float(closes[k])
     ts_reclaim = df.index[k]
     ts_iso_reclaim = _bar_timestamp_utc_iso(ts_reclaim)
