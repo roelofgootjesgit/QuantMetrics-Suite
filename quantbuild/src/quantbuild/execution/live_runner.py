@@ -2839,8 +2839,35 @@ class LiveRunner:
         for pos in list(self.position_monitor.all_positions):
             if not pos.thesis_valid:
                 logger.warning("Position %s thesis invalid — closing", pos.trade_id)
-                if not self.dry_run and self.broker.is_connected:
-                    self.broker.close_trade(pos.trade_id)
+                if self.dry_run:
+                    closed = True
+                elif self.broker.is_connected:
+                    try:
+                        closed = bool(self.broker.close_trade(pos.trade_id))
+                    except Exception as e:
+                        logger.error(
+                            "Close trade %s raised after thesis invalidation: %s",
+                            pos.trade_id,
+                            e,
+                        )
+                        closed = False
+                else:
+                    logger.error(
+                        "Cannot close position %s after thesis invalidation — broker not connected",
+                        pos.trade_id,
+                    )
+                    closed = False
+
+                if not closed:
+                    # Keep local state with thesis_valid=False so the next cycle retries.
+                    # Removing here would emit a false trade_closed and let broker sync
+                    # resurrect the still-open trade as thesis_valid=True.
+                    logger.error(
+                        "Broker close failed for %s — retaining local position for retry",
+                        pos.trade_id,
+                    )
+                    continue
+
                 removed = self.position_monitor.remove_position(pos.trade_id)
                 self.order_manager.unregister_trade(pos.trade_id, reason="thesis_invalid")
                 if removed is not None:
