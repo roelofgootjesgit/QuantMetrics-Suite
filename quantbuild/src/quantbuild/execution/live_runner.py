@@ -26,6 +26,7 @@ from src.quantbuild.config import load_config
 from src.quantbuild.data.sessions import session_from_timestamp, ENTRY_SESSIONS
 from src.quantbuild.alerts.telegram import TelegramAlerter
 from src.quantbuild.execution.broker_factory import create_broker
+from src.quantbuild.execution.symbol_registry import get_symbol_spec
 from src.quantbuild.execution.quantlog_emitter import QuantLogEmitter
 from src.quantbuild.execution.signal_evaluated_desk_grade import build_desk_grade_payload
 from src.quantbuild.execution.signal_evaluated_payload import (
@@ -366,6 +367,30 @@ class LiveRunner:
 
     # ── Execution Guardrails ──────────────────────────────────────────
 
+    def _resolve_pip_size(self) -> Optional[float]:
+        """Return instrument pip size for converting broker price-spread → pips."""
+        symbol = str(self.cfg.get("symbol", "XAUUSD") or "XAUUSD")
+        spec = get_symbol_spec(self._broker_provider, symbol)
+        if spec is not None and spec.pip_size > 0:
+            return float(spec.pip_size)
+
+        # Fallback for symbols not yet registered (matches instrument_profiles).
+        key = symbol.replace("_", "").upper()
+        if key in {"XAUUSD", "XAGUSD"} or "JPY" in key:
+            return 0.01
+        if key in {"NAS100", "US30", "SPX500", "GER40", "UK100"}:
+            return 0.1
+        if len(key) == 6 and key.isalpha():
+            return 0.0001
+        return None
+
+    def _spread_price_to_pips(self, spread_price: float) -> Optional[float]:
+        """Convert broker ask-bid price distance into pips; None if pip size unknown."""
+        pip = self._resolve_pip_size()
+        if pip is None or pip <= 0:
+            return None
+        return float(spread_price) / pip
+
     def _check_spread_guard(self) -> Optional[Dict[str, Any]]:
         """Return a block detail dict if spread guard fails; None if OK.
 
@@ -382,13 +407,21 @@ class LiveRunner:
                 "observed": None,
                 "threshold": None,
             }
-        spread = float(price_info.get("spread", 0) or 0.0)
+        spread_price = float(price_info.get("spread", 0) or 0.0)
         threshold = float(self._max_spread_pips)
-        if spread > threshold:
+        spread_pips = self._spread_price_to_pips(spread_price)
+        if spread_pips is None:
             return {
                 "code": "spread_block",
-                "detail": f"spread_too_wide ({spread:.2f} > {threshold})",
-                "observed": spread,
+                "detail": "spread_pip_size_unknown",
+                "observed": None,
+                "threshold": threshold,
+            }
+        if spread_pips > threshold:
+            return {
+                "code": "spread_block",
+                "detail": f"spread_too_wide ({spread_pips:.2f} > {threshold})",
+                "observed": spread_pips,
                 "threshold": threshold,
             }
         return None
@@ -407,7 +440,7 @@ class LiveRunner:
         if raw is None:
             return None
         try:
-            return float(raw)
+            return self._spread_price_to_pips(float(raw))
         except (TypeError, ValueError):
             return None
 
@@ -2655,21 +2688,39 @@ class LiveRunner:
         )
         return "order_filled", "all_conditions_met"
 
+    @staticmethod
+    def _risk_pct_to_fraction(risk_pct: float) -> float:
+        """Normalize ``max_position_pct`` to an equity fraction.
+
+        Schema/prod configs use fractions in ``(0, 0.1]`` (e.g. ``0.015`` = 1.5%).
+        Legacy percent-unit values (``> 0.1``, e.g. ``1.0`` = 1%) are divided by 100.
+        """
+        rp = float(risk_pct)
+        if rp <= 0:
+            return 0.0
+        if rp <= 0.1:
+            return rp
+        return rp / 100.0
+
     def _calculate_units(self, entry: float, sl: float, risk_pct: float) -> float:
         """Calculate position size based on account equity and risk percentage."""
         risk_amount_per_unit = abs(entry - sl)
         if risk_amount_per_unit <= 0:
             return 0.0
 
+        risk_fraction = self._risk_pct_to_fraction(risk_pct)
+        if risk_fraction <= 0:
+            return 0.0
+
         if not self.dry_run and self.broker.is_connected:
             acct = self.broker.get_account_info()
             if acct:
-                risk_usd = acct.equity * (risk_pct / 100.0)
+                risk_usd = acct.equity * risk_fraction
                 return max(1, round(risk_usd / risk_amount_per_unit))
 
         # Dry run default: assume $10k account
         default_equity = self.cfg.get("risk", {}).get("paper_equity", 10000.0)
-        risk_usd = default_equity * (risk_pct / 100.0)
+        risk_usd = default_equity * risk_fraction
         return max(1, round(risk_usd / risk_amount_per_unit))
 
     # ── News Polling ──────────────────────────────────────────────────
