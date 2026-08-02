@@ -19,7 +19,7 @@ def _minimal_cfg():
         "timeframes": ["15m", "1h"],
         "data": {"base_path": "data/market_cache"},
         "backtest": {"tp_r": 2.0, "sl_r": 1.0, "session_mode": "extended"},
-        "risk": {"max_daily_loss_r": 3.0, "max_position_pct": 1.0, "paper_equity": 10000},
+        "risk": {"max_daily_loss_r": 3.0, "max_position_pct": 0.01, "paper_equity": 10000},
         "strategy": {},
         "regime": {},
         "regime_profiles": {
@@ -168,7 +168,8 @@ class TestGuardrails:
 
     def test_calculate_units_dry_run(self):
         runner = LiveRunner(_minimal_cfg(), dry_run=True)
-        units = runner._calculate_units(entry=2000, sl=1998, risk_pct=1.0)
+        # Schema/prod convention: 0.01 = 1% of equity
+        units = runner._calculate_units(entry=2000, sl=1998, risk_pct=0.01)
         assert units > 0
         expected = round(10000 * 0.01 / 2.0)
         assert units == expected
