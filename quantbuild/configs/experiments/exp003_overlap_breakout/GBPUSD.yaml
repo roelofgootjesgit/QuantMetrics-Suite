@@ -9,7 +9,8 @@ timeframes:
   - 1h
 session_open_utc: "13:30"
 tp_multiplier: 1.5
-mock_spread: 0.4
+# Price units (0.4 pips × 0.0001). Never use raw pip counts here.
+mock_spread: 0.00004
 major_news_filter: true
 experiment_id: EXP-003
 
@@ -17,7 +18,7 @@ data:
   base_path: data/market_cache
 
 broker:
-  mock_spread: 0.4
+  mock_spread: 0.00004
 
 quantlog:
   enabled: true
