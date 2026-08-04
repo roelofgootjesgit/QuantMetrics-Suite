@@ -178,6 +178,7 @@ def test_sl_bar_mfe_exclusion() -> None:
     assert out["result"] == "LOSS"
     assert out["exit_bar_idx"] == 2
     assert out["bars_to_mfe"] == 1
+    assert out["mfe_peak_ts"] == idx[1]
 
 
 def test_fx_mock_spread_rejects_pip_count_units() -> None:
@@ -243,4 +244,3 @@ def test_exp003_fx_configs_use_price_unit_spreads() -> None:
         broker = float((raw.get("broker") or {}).get("mock_spread") or 0.0)
         assert 0 <= top < maximum, f"{name} mock_spread={top} not price units"
         assert 0 <= broker < maximum, f"{name} broker.mock_spread={broker} not price units"
-    assert out["mfe_peak_ts"] == idx[1]
