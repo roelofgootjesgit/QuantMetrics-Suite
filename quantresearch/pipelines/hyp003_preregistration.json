@@ -52,12 +52,12 @@
     {
       "symbol": "EURUSD",
       "role": "fx_major",
-      "mock_spread": 0.3
+      "mock_spread": 0.00003
     },
     {
       "symbol": "GBPUSD",
       "role": "fx_major",
-      "mock_spread": 0.4
+      "mock_spread": 0.00004
     }
   ],
   "data_window": {

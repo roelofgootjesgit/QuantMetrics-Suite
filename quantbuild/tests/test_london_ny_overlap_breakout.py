@@ -11,6 +11,7 @@ import pytest
 from src.quantbuild.backtest.engine import _simulate_trade_price_levels
 from src.quantbuild.strategies.london_ny_overlap_breakout import (
     _find_range_signal_entry,
+    _resolve_mock_spread_price,
     run_london_ny_overlap_breakout_backtest,
 )
 
@@ -177,4 +178,69 @@ def test_sl_bar_mfe_exclusion() -> None:
     assert out["result"] == "LOSS"
     assert out["exit_bar_idx"] == 2
     assert out["bars_to_mfe"] == 1
+
+
+def test_fx_mock_spread_rejects_pip_count_units() -> None:
+    """FX mock_spread must be price distance; pip-count values like 0.3 are rejected."""
+    cfg = _base_cfg()
+    cfg["broker"]["mock_spread"] = 0.3
+    with pytest.raises(ValueError, match="price-unit cap"):
+        _resolve_mock_spread_price(cfg, "EURUSD")
+    cfg["broker"]["mock_spread"] = 0.00003
+    assert _resolve_mock_spread_price(cfg, "EURUSD") == pytest.approx(0.00003)
+    # XAU/index-scale spreads remain valid price units.
+    cfg["broker"]["mock_spread"] = 0.5
+    assert _resolve_mock_spread_price(cfg, "XAUUSD") == pytest.approx(0.5)
+
+
+def test_fx_pip_count_spread_forces_timeout_half_r(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: pip-count spread on EURUSD makes SL/TP unreachable → ~-0.5R TIMEOUT.
+
+    This is the EXP-003 EURUSD/GBPUSD mean_r≈-0.5 artifact. The engine now rejects
+    such configs; this unit test documents the economic corruption path.
+    """
+    monkeypatch.setattr(
+        "src.quantbuild.strategies.london_ny_overlap_breakout._resolve_mock_spread_price",
+        lambda cfg, symbol: float((cfg.get("broker") or {}).get("mock_spread") or 0.0),
+    )
+    cfg = _base_cfg()
+    cfg["quantlog"] = {"enabled": False, "inference_requires_quantlog": False}
+    cfg["broker"]["mock_spread"] = 0.3
+    # EURUSD-scale path: range ~15 pips; absurd spread makes TP/SL unreachable.
+    idx = pd.date_range("2026-01-08 13:30", periods=8, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [1.1000, 1.1010, 1.1020, 1.1020, 1.1015, 1.1010, 1.1005, 1.1000],
+            "high": [1.1015, 1.1025, 1.1025, 1.1030, 1.1020, 1.1015, 1.1010, 1.1005],
+            "low": [1.0990, 1.1000, 1.1010, 1.1010, 1.1005, 1.1000, 1.0995, 1.0990],
+            "close": [1.1005, 1.1020, 1.1018, 1.1025, 1.1012, 1.1008, 1.1002, 1.0998],
+            "volume": [1] * 8,
+        },
+        index=idx,
+    )
+    trades = run_london_ny_overlap_breakout_backtest(
+        cfg,
+        df,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        Path("."),
+        "EURUSD",
+        "1h",
+    )
+    assert len(trades) == 1
+    assert trades[0].result.value == "TIMEOUT"
+    assert float(trades[0].profit_r) == pytest.approx(-0.5, abs=0.05)
+
+
+def test_exp003_fx_configs_use_price_unit_spreads() -> None:
+    """Checked-in EXP-003 FX YAMLs must stay in price units (not pip counts)."""
+    import yaml
+
+    root = Path(__file__).resolve().parents[1] / "configs" / "experiments" / "exp003_overlap_breakout"
+    for name, maximum in (("EURUSD.yaml", 0.01), ("GBPUSD.yaml", 0.01)):
+        raw = yaml.safe_load((root / name).read_text(encoding="utf-8"))
+        top = float(raw.get("mock_spread") or 0.0)
+        broker = float((raw.get("broker") or {}).get("mock_spread") or 0.0)
+        assert 0 <= top < maximum, f"{name} mock_spread={top} not price units"
+        assert 0 <= broker < maximum, f"{name} broker.mock_spread={broker} not price units"
     assert out["mfe_peak_ts"] == idx[1]

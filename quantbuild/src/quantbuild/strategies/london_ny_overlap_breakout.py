@@ -31,6 +31,34 @@ logger = logging.getLogger(__name__)
 HYPOTHESIS_ID = "HYP-003"
 STRATEGY_ID = "london_ny_overlap_breakout"
 
+# FX majors quoted near 1.0; mock_spread is always price distance (see BB/MACD configs).
+# Values >= 0.01 (~100 pips) are almost certainly pip-count mistakes and force
+# unreachable SL/TP → end-of-sample TIMEOUT with ~-0.5R (EXP-003 EUR/GBP artifact).
+_FX_MAJOR_SPREAD_PRICE_MAX = {
+    "EURUSD": 0.01,
+    "GBPUSD": 0.01,
+    "AUDUSD": 0.01,
+    "NZDUSD": 0.01,
+    "USDCAD": 0.01,
+    "USDCHF": 0.01,
+}
+
+
+def _resolve_mock_spread_price(cfg: Dict[str, Any], symbol: str) -> float:
+    """Return mock spread in price units; fail closed on FX unit mistakes."""
+    broker = cfg.get("broker") or {}
+    spread = float(broker.get("mock_spread") or cfg.get("mock_spread") or 0.0)
+    if spread < 0:
+        raise ValueError(f"mock_spread must be >= 0, got {spread}")
+    key = str(symbol or "").replace("_", "").upper()
+    max_price = _FX_MAJOR_SPREAD_PRICE_MAX.get(key)
+    if max_price is not None and spread >= max_price:
+        raise ValueError(
+            f"mock_spread={spread} for {key} exceeds price-unit cap {max_price}. "
+            f"Use price distance (e.g. 0.3 pips → 0.00003), not pip counts."
+        )
+    return spread
+
 
 def _session_open_time(cfg: Dict[str, Any]) -> time:
     raw = (cfg.get("session_open_utc") or (cfg.get("backtest") or {}).get("session_open_utc") or "13:30")
@@ -131,7 +159,7 @@ def run_london_ny_overlap_breakout_backtest(
 
     session_open = _session_open_time(cfg)
     broker = cfg.get("broker") or {}
-    spread = float(broker.get("mock_spread") or cfg.get("mock_spread") or 0.0)
+    spread = _resolve_mock_spread_price(cfg, symbol)
     tp_mult = float(cfg.get("tp_multiplier") or (cfg.get("backtest") or {}).get("tp_multiplier") or 1.5)
     bt_mode = (cfg.get("backtest") or {}).get("session_mode", "extended")
 
