@@ -82,17 +82,17 @@ class TestDryRunPositionLifecycle:
         runner.order_manager.save_state = MagicMock()
 
         _add_long(runner, "DRY_A", entry=2000.0, sl=1990.0, tp=2020.0)
-        _add_long(runner, "DRY_B", entry=2005.0, sl=1995.0, tp=2025.0)
+        _add_long(runner, "DRY_B", entry=2010.0, sl=1980.0, tp=2040.0)
         assert len(runner.position_monitor.open_positions) == 2
         assert not runner._check_position_limit()
 
-        # Price still between SL/TP — phantoms remain, limit still full.
-        runner._load_recent_data = MagicMock(return_value=(_bar(2010, 2000, 2005), "cache"))
+        # Price still between both SL/TP — phantoms remain, limit still full.
+        runner._load_recent_data = MagicMock(return_value=(_bar(2015, 2000, 2008), "cache"))
         runner._monitor_positions()
         assert len(runner.position_monitor.open_positions) == 2
         assert not runner._check_position_limit()
 
-        # Bar wicks through DRY_A stop — one slot frees.
+        # Bar wicks through DRY_A stop only (above DRY_B SL=1980) — one slot frees.
         runner._load_recent_data = MagicMock(return_value=(_bar(2008, 1988, 1992), "cache"))
         runner._monitor_positions()
         assert "DRY_A" not in {p.trade_id for p in runner.position_monitor.all_positions}
