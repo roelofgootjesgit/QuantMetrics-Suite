@@ -991,6 +991,8 @@ class LiveRunner:
         bars_to_mfe: Optional[int] = None,
     ) -> None:
         """Emit ``trade_closed`` for lifecycle closure (P0-D). Uses ENTER registration when available."""
+        # Accumulate daily R so max_daily_loss_r can trip (live sync + dry-run exits).
+        self._daily_pnl_r += float(pnl_r)
         if not self._quantlog:
             return
         meta = self._open_trade_quantlog.pop(trade_id, None)
@@ -2834,8 +2836,103 @@ class LiveRunner:
 
     # ── Position Monitoring ───────────────────────────────────────────
 
+    def _resolve_dry_run_mark_ohlc(self) -> Optional[tuple[float, float, float]]:
+        """Latest 15m (high, low, close) for dry-run SL/TP simulation."""
+        try:
+            data, _ = self._load_recent_data("15m", bars=5)
+        except Exception as e:
+            logger.warning("Dry-run mark price load failed: %s", e)
+            return None
+        if data is None or getattr(data, "empty", True):
+            return None
+        row = data.iloc[-1]
+        try:
+            return float(row["high"]), float(row["low"]), float(row["close"])
+        except Exception as e:
+            logger.warning("Dry-run mark OHLC parse failed: %s", e)
+            return None
+
+    @staticmethod
+    def _direction_str(direction: Any) -> str:
+        return direction.value if hasattr(direction, "value") else str(direction)
+
+    def _dry_run_levels(self, pos: Position) -> tuple[float, float]:
+        """Prefer OrderManager current SL/TP when present (BE/trail)."""
+        order = self.order_manager.managed_orders.get(pos.trade_id)
+        if order is not None:
+            return float(order.current_sl), float(order.current_tp)
+        return float(pos.sl), float(pos.tp)
+
+    def _dry_run_exit_from_bar(
+        self, pos: Position, high: float, low: float
+    ) -> Optional[tuple[float, str]]:
+        """Return (exit_price, outcome) if SL/TP is touched. Dual-touch → stop_loss."""
+        direction = self._direction_str(pos.direction)
+        sl, tp = self._dry_run_levels(pos)
+        if direction == "LONG":
+            sl_hit = low <= sl
+            tp_hit = high >= tp
+        else:
+            sl_hit = high >= sl
+            tp_hit = low <= tp
+        if sl_hit:
+            return sl, "stop_loss"
+        if tp_hit:
+            return tp, "take_profit"
+        return None
+
+    def _close_dry_run_position(self, pos: Position, exit_price: float, outcome: str) -> None:
+        """Remove a simulated dry-run position and emit trade_closed."""
+        removed = self.position_monitor.remove_position(pos.trade_id)
+        self.order_manager.unregister_trade(pos.trade_id, reason=outcome)
+        if removed is None:
+            return
+        direction = self._direction_str(removed.direction)
+        try:
+            pr = calculate_rr(removed.entry_price, float(exit_price), removed.sl, direction)
+        except Exception:
+            pr = 0.0
+        if direction == "LONG":
+            pnl_abs = (float(exit_price) - removed.entry_price) * removed.units
+        else:
+            pnl_abs = (removed.entry_price - float(exit_price)) * removed.units
+        logger.info(
+            "[DRY RUN] Closed %s via %s @ %.5f (pnl_r=%.2f)",
+            pos.trade_id, outcome, float(exit_price), float(pr),
+        )
+        self._emit_trade_closed(
+            trade_id=pos.trade_id,
+            exit_price=float(exit_price),
+            pnl_r=float(pr),
+            outcome=outcome,
+            exit_tag="dry_run_sim",
+            pnl_abs=float(pnl_abs),
+            direction=direction,
+            regime=removed.regime_at_entry or None,
+        )
+
+    def _simulate_dry_run_exits(self) -> None:
+        """Apply SL/TP lifecycle to dry-run phantoms so position_limit can free slots."""
+        if not self.dry_run or not self.position_monitor.all_positions:
+            return
+        ohlc = self._resolve_dry_run_mark_ohlc()
+        if ohlc is None:
+            return
+        high, low, close = ohlc
+        for pos in list(self.position_monitor.all_positions):
+            self.position_monitor.update_price(pos.trade_id, close)
+            # Use registered SL/TP only (no same-bar BE/trail path dependence).
+            hit = self._dry_run_exit_from_bar(pos, high, low)
+            if hit is None:
+                continue
+            exit_price, outcome = hit
+            self._close_dry_run_position(pos, exit_price, outcome)
+
     def _monitor_positions(self):
-        """Check open positions: close invalid thesis, update order manager."""
+        """Check open positions: dry-run SL/TP lifecycle, close invalid thesis."""
+        if self.dry_run:
+            self._simulate_dry_run_exits()
+
         for pos in list(self.position_monitor.all_positions):
             if not pos.thesis_valid:
                 logger.warning("Position %s thesis invalid — closing", pos.trade_id)
