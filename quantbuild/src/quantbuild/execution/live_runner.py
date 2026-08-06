@@ -491,7 +491,14 @@ class LiveRunner:
         if self.dry_run or not self.broker.is_connected:
             return
 
-        broker_trades = self.broker.get_open_trades()
+        try:
+            broker_trades = self.broker.get_open_trades()
+        except Exception as e:
+            # API/auth/network failures must not look like a flat account — that would
+            # unregister live positions, free capacity, and allow oversizing.
+            logger.error("Broker position sync failed; keeping local positions: %s", e)
+            return
+
         broker_ids = {t.trade_id for t in broker_trades}
         monitor_ids = {p.trade_id for p in self.position_monitor.all_positions}
 
@@ -509,6 +516,7 @@ class LiveRunner:
                     sl=bt.sl or 0.0,
                     tp=bt.tp or 0.0,
                     open_time=bt.open_time or datetime.now(timezone.utc),
+                    peak_price=bt.current_price or bt.entry_price,
                 )
                 self.position_monitor.add_position(pos)
                 logger.info("Synced position from broker: %s %s", bt.trade_id, bt.direction)
@@ -533,8 +541,22 @@ class LiveRunner:
                     direction=removed.direction.value,
                 )
 
-        # Update prices
+        # Refresh units/SL/TP from broker (partial closes) then update marks.
         for bt in broker_trades:
+            pos = self.position_monitor.get_position(bt.trade_id)
+            if pos is not None:
+                pos.units = float(bt.units)
+                if bt.sl is not None:
+                    pos.sl = float(bt.sl)
+                if bt.tp is not None:
+                    pos.tp = float(bt.tp)
+            managed = self.order_manager.managed_orders.get(bt.trade_id)
+            if managed is not None:
+                managed.units = float(bt.units)
+                if bt.sl is not None:
+                    managed.current_sl = float(bt.sl)
+                if bt.tp is not None:
+                    managed.current_tp = float(bt.tp)
             self.position_monitor.update_price(bt.trade_id, bt.current_price)
             self.order_manager.update_price(bt.trade_id, bt.current_price)
 
