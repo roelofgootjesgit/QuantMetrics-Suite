@@ -7,10 +7,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from quantbridge.execution.errors import classify_error
+from quantbridge.execution.errors import BrokerError, classify_error
 from quantbridge.execution.models import AccountState, OrderResult, Position
 
 logger = logging.getLogger(__name__)
+
+# cTrader Open API volumes are in cents (0.01 of a unit).
+# Docs: 1000 in protocol means 10.00 units. Spotware samples multiply human units by 100.
+_API_VOLUME_SCALE = 100
 
 
 def _from_money(value: int, digits: int = 2) -> float:
@@ -29,6 +33,16 @@ def _from_price(value: int) -> float:
     if abs(v) >= 100000:
         return v / 100000.0
     return v
+
+
+def to_api_volume(units: float) -> int:
+    """Convert human/broker-facing units to cTrader protocol volume cents."""
+    return int(round(float(units) * _API_VOLUME_SCALE))
+
+
+def from_api_volume(volume: float | int) -> float:
+    """Convert cTrader protocol volume cents to human/broker-facing units."""
+    return float(volume) / float(_API_VOLUME_SCALE)
 
 
 class CTraderOpenApiClient:
@@ -462,7 +476,7 @@ class CTraderOpenApiClient:
                 symbolId=int(symbol_id),
                 orderType=model.MARKET,
                 tradeSide=trade_side,
-                volume=int(units),
+                volume=to_api_volume(units),
                 comment=comment,
                 clientOrderId=client_order_ref or f"qb-{uuid.uuid4().hex[:10]}",
             )
@@ -534,7 +548,7 @@ class CTraderOpenApiClient:
                 side_value = int(getattr(td, "tradeSide", 0))
                 direction = "LONG" if side_value == int(model.BUY) else "SHORT"
                 entry_price = _from_price(getattr(p, "price", 0))
-                units = float(getattr(td, "volume", 0))
+                units = from_api_volume(getattr(td, "volume", 0))
                 current = mid or entry_price
                 pnl_per_unit = (current - entry_price) if direction == "LONG" else (entry_price - current)
                 out.append(
@@ -552,9 +566,14 @@ class CTraderOpenApiClient:
                 )
             self._set_success()
             return out
+        except BrokerError:
+            raise
         except Exception as e:
-            self._set_error(f"reconcile_failed: {e}")
-            return []
+            message = f"reconcile_failed: {e}"
+            self._set_error(message)
+            # Never return [] on transport/API failure — callers treat empty as flat account
+            # and LiveRunner sync would unregister real positions / free position slots.
+            raise BrokerError(code="reconcile_failed", message=message, retryable=True) from e
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> bool:
         if not self.connected:
@@ -568,7 +587,7 @@ class CTraderOpenApiClient:
                 positionId=int(trade_id),
             )
             if units is not None:
-                req.volume = int(units)
+                req.volume = to_api_volume(units)
             self._send_message(req)
             self._set_success()
             return True

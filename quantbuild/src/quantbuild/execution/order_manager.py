@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
 
+from src.quantbuild.execution.symbol_registry import get_symbol_spec
+
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -33,17 +35,43 @@ class ManagedOrder:
     slippage: float = 0.0
 
 
+# Defaults are OFF: SQE backtest does not model BE/partial/trail. Enabling these
+# without an explicit order_management config silently diverges live from validated BT.
 DEFAULT_ORDER_CONFIG = {
-    "trailing_stop": {"enabled": True, "activation_r": 1.5, "trail_distance_r": 1.0},
-    "break_even": {"enabled": True, "trigger_r": 1.0, "offset_pips": 2},
-    "partial_close": {"enabled": True, "trigger_r": 1.0, "close_pct": 50},
+    "trailing_stop": {"enabled": False, "activation_r": 1.5, "trail_distance_r": 1.0},
+    "break_even": {"enabled": False, "trigger_r": 1.0, "offset_pips": 2},
+    "partial_close": {"enabled": False, "trigger_r": 1.0, "close_pct": 50},
 }
+
+
+def _merge_order_config(overrides: Optional[Dict]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {
+        key: (dict(value) if isinstance(value, dict) else value)
+        for key, value in DEFAULT_ORDER_CONFIG.items()
+    }
+    if not overrides:
+        return merged
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
+
+
+def _pip_size_for_instrument(instrument: str) -> float:
+    for provider in ("ctrader", "oanda"):
+        spec = get_symbol_spec(provider, instrument)
+        if spec is not None:
+            return float(spec.pip_size)
+    # XAU-style fallback; FX symbols should resolve via registry.
+    return 0.01
 
 
 class OrderManager:
     def __init__(self, broker=None, config: Optional[Dict] = None):
         self.broker = broker
-        self.config = {**DEFAULT_ORDER_CONFIG, **(config or {})}
+        self.config = _merge_order_config(config)
         self.managed_orders: Dict[str, ManagedOrder] = {}
         self._callbacks: List[Callable] = []
 
@@ -87,13 +115,15 @@ class OrderManager:
                 order.peak_price = current_price
         else:
             current_r = (order.entry_price - current_price) / risk
-            if current_price < order.peak_price or order.peak_price == order.entry_price:
+            # Favorable extreme for shorts is the lowest price since entry.
+            if current_price < order.peak_price:
                 order.peak_price = current_price
 
         # Break-even
         be_cfg = self.config.get("break_even", {})
         if be_cfg.get("enabled") and not order.break_even_set and current_r >= be_cfg.get("trigger_r", 1.0):
-            offset = be_cfg.get("offset_pips", 2) * 0.01
+            pip_size = _pip_size_for_instrument(order.instrument)
+            offset = float(be_cfg.get("offset_pips", 2)) * pip_size
             new_sl = order.entry_price + offset if order.direction == "LONG" else order.entry_price - offset
             if self._modify_sl(trade_id, new_sl):
                 order.current_sl = new_sl

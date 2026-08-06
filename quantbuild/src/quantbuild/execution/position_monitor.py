@@ -22,6 +22,9 @@ class PositionMonitor:
             logger.info("Removed position: %s", trade_id)
         return pos
 
+    def get_position(self, trade_id: str) -> Optional[Position]:
+        return self._positions.get(trade_id)
+
     def update_price(self, trade_id: str, current_price: float) -> None:
         pos = self._positions.get(trade_id)
         if not pos:
@@ -31,8 +34,14 @@ class PositionMonitor:
             pos.unrealized_pnl = (current_price - pos.entry_price) * pos.units
         else:
             pos.unrealized_pnl = (pos.entry_price - current_price) * pos.units
-        if current_price > pos.peak_price:
-            pos.peak_price = current_price
+        # Track favorable extreme for both sides (SHORT peaks are lows).
+        direction = pos.direction.value if hasattr(pos.direction, "value") else pos.direction
+        if direction == "LONG":
+            if pos.peak_price <= 0 or current_price > pos.peak_price:
+                pos.peak_price = current_price
+        else:
+            if pos.peak_price <= 0 or current_price < pos.peak_price:
+                pos.peak_price = current_price
 
     def invalidate_thesis(self, trade_id: str, reason: str) -> None:
         pos = self._positions.get(trade_id)
