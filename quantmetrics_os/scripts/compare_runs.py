@@ -220,7 +220,24 @@ def _build_verdict(
 
     b_exp = b_perf.get("expectancy_r")
     c_exp = c_perf.get("expectancy_r")
+    # Absolute edge gate: never PROMOTE a non-positive candidate (aligns with
+    # promotion_gate.py / root README promotion criteria).
+    if c_exp is None or c_exp <= 0:
+        verdict = "REJECT"
+        reasons.append(
+            f"candidate expectancy not strictly positive ({_fmt_num(c_exp)}R)"
+        )
+
     exp_delta = (c_exp - b_exp) if (b_exp is not None and c_exp is not None) else None
+    # Relative edge gate: PROMOTE requires a real expectancy improvement. Without
+    # this, missing month timestamps skip consistency and a worse candidate can
+    # still default to PROMOTE.
+    if exp_delta is None or exp_delta <= 0:
+        verdict = "REJECT"
+        reasons.append(
+            f"candidate expectancy does not improve on baseline (delta {_fmt_num(exp_delta)}R)"
+        )
+
     b_action = b_fun.get("evaluated_to_action_rate")
     c_action = c_fun.get("evaluated_to_action_rate")
     action_delta = (c_action - b_action) if (b_action is not None and c_action is not None) else None
@@ -283,6 +300,8 @@ def build_comparison(
             "min_trades": min_trades,
             "max_guard_dominance": max_guard_dominance,
             "min_consistency_ratio": 0.60,
+            "require_positive_candidate_expectancy": True,
+            "require_expectancy_improvement": True,
         },
         "baseline": baseline,
         "candidate": candidate,
