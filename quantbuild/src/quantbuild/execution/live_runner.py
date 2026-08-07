@@ -412,8 +412,13 @@ class LiveRunner:
             return None
 
     def _check_position_limit(self) -> bool:
-        """Return True if we can open another position."""
-        return len(self.position_monitor.open_positions) < self._max_open_positions
+        """Return True if we can open another position.
+
+        Count *all* locally tracked positions, including those with
+        ``thesis_valid=False`` awaiting a broker close retry. Those still
+        represent live exposure and must consume a position-limit slot.
+        """
+        return len(self.position_monitor.all_positions) < self._max_open_positions
 
     def _check_daily_loss_limit(self) -> bool:
         """Return True if daily loss limit is not breached."""
@@ -2506,59 +2511,25 @@ class LiveRunner:
             trade_id = exec_result.broker_order_id or f"UNK_{now.strftime('%H%M%S')}"
             fill_price = exec_result.filled_price or entry_price
 
-            # Slippage check
-            slippage = abs(fill_price - entry_price)
-            risk_amount = abs(entry_price - sl)
-            if risk_amount > 0 and (slippage / risk_amount) > self._max_slippage_r:
-                logger.warning(
-                    "Slippage too high: %.2f (%.1f%% of risk) — closing trade",
-                    slippage, 100 * slippage / risk_amount,
-                )
-                self.broker.close_trade(trade_id)
-                try:
-                    slip_pr = calculate_rr(entry_price, float(fill_price), sl, direction)
-                except Exception:
-                    slip_pr = 0.0
-                self._emit_trade_closed(
-                    trade_id=trade_id,
-                    exit_price=float(fill_price),
-                    pnl_r=float(slip_pr),
-                    outcome="slippage_flatten",
-                    exit_tag="slippage_guard",
-                    trace_id=trace_id,
-                    decision_cycle_id=decision_cycle_id,
-                    session=session,
-                    regime=regime,
-                    direction=direction,
-                    pnl_abs=0.0,
-                )
-                slip_ratio = float(slippage / risk_amount) if risk_amount > 0 else 0.0
-                self._emit_guard_decision(
-                    trace_id=trace_id,
-                    decision_cycle_id=decision_cycle_id,
-                    decision="BLOCK",
-                    reason="slippage_block",
-                    guard_name="slippage_guard",
-                    session=session,
-                    regime=regime,
-                    threshold=float(self._max_slippage_r),
-                    observed_value=slip_ratio,
-                )
-                self._emit_trade_action(
-                    trace_id=trace_id,
-                    decision_cycle_id=decision_cycle_id,
-                    decision="NO_ACTION",
-                    reason="slippage_block",
-                    side=direction,
-                    session=session,
-                    regime=regime,
-                    decision_context=_with_exec({"blocked_by": "slippage_block"}),
-                )
-                if signal_id:
-                    self._emit_signal_filtered(
-                        trace_id=trace_id, signal_id=signal_id, raw_reason="slippage_block"
-                    )
-                return "no_trade", "slippage_block"
+            slip_early = self._handle_excessive_slippage_fill(
+                trade_id=trade_id,
+                fill_price=float(fill_price),
+                entry_price=float(entry_price),
+                sl=float(sl),
+                tp=float(tp),
+                units=float(units),
+                direction=direction,
+                entry_atr=float(entry_atr),
+                regime=regime,
+                session=session,
+                now=now,
+                trace_id=trace_id,
+                decision_cycle_id=decision_cycle_id,
+                signal_id=signal_id,
+                decision_context_builder=_with_exec,
+            )
+            if slip_early is not None:
+                return slip_early
 
         # Register with order manager
         self.order_manager.register_trade(
@@ -2834,13 +2805,177 @@ class LiveRunner:
 
     # ── Position Monitoring ───────────────────────────────────────────
 
+    def _close_broker_trade(self, trade_id: str, *, context: str) -> bool:
+        """Close a broker trade; return True only when the close is confirmed."""
+        if self.dry_run:
+            return True
+        if not self.broker.is_connected:
+            logger.error(
+                "Cannot close position %s (%s) — broker not connected",
+                trade_id,
+                context,
+            )
+            return False
+        try:
+            return bool(self.broker.close_trade(trade_id))
+        except Exception as e:
+            logger.error(
+                "Close trade %s raised during %s: %s",
+                trade_id,
+                context,
+                e,
+            )
+            return False
+
+    def _handle_excessive_slippage_fill(
+        self,
+        *,
+        trade_id: str,
+        fill_price: float,
+        entry_price: float,
+        sl: float,
+        tp: float,
+        units: float,
+        direction: str,
+        entry_atr: float,
+        regime: Optional[str],
+        session: str,
+        now: datetime,
+        trace_id: str,
+        decision_cycle_id: str,
+        signal_id: Optional[str],
+        decision_context_builder,
+    ) -> Optional[tuple[str, str]]:
+        """Flatten an excessive-slippage fill, or track it for close retry.
+
+        Returns ``(status, reason)`` when the caller should stop the enter path.
+        Returns ``None`` when slippage is within tolerance.
+        """
+        slippage = abs(fill_price - entry_price)
+        risk_amount = abs(entry_price - sl)
+        if risk_amount <= 0 or (slippage / risk_amount) <= self._max_slippage_r:
+            return None
+
+        logger.warning(
+            "Slippage too high: %.2f (%.1f%% of risk) — closing trade",
+            slippage,
+            100 * slippage / risk_amount,
+        )
+        slip_ratio = float(slippage / risk_amount)
+        self._emit_guard_decision(
+            trace_id=trace_id,
+            decision_cycle_id=decision_cycle_id,
+            decision="BLOCK",
+            reason="slippage_block",
+            guard_name="slippage_guard",
+            session=session,
+            regime=regime,
+            threshold=float(self._max_slippage_r),
+            observed_value=slip_ratio,
+        )
+        self._emit_trade_action(
+            trace_id=trace_id,
+            decision_cycle_id=decision_cycle_id,
+            decision="NO_ACTION",
+            reason="slippage_block",
+            side=direction,
+            session=session,
+            regime=regime,
+            decision_context=decision_context_builder({"blocked_by": "slippage_block"}),
+        )
+        if signal_id:
+            self._emit_signal_filtered(
+                trace_id=trace_id, signal_id=signal_id, raw_reason="slippage_block"
+            )
+
+        closed = self._close_broker_trade(trade_id, context="slippage_flatten")
+        if closed:
+            try:
+                slip_pr = calculate_rr(entry_price, float(fill_price), sl, direction)
+            except Exception:
+                slip_pr = 0.0
+            self._emit_trade_closed(
+                trade_id=trade_id,
+                exit_price=float(fill_price),
+                pnl_r=float(slip_pr),
+                outcome="slippage_flatten",
+                exit_tag="slippage_guard",
+                trace_id=trace_id,
+                decision_cycle_id=decision_cycle_id,
+                session=session,
+                regime=regime,
+                direction=direction,
+                pnl_abs=0.0,
+            )
+            return "no_trade", "slippage_block"
+
+        # Close failed: keep the fill under local management with
+        # thesis_valid=False so _monitor_positions retries the flatten.
+        # Emitting trade_closed here would orphan live broker exposure
+        # and free a position-limit slot until the next sync.
+        logger.error(
+            "Slippage flatten failed for %s — registering position for close retry",
+            trade_id,
+        )
+        self.order_manager.register_trade(
+            trade_id=trade_id,
+            instrument=self.cfg.get("symbol", "XAUUSD"),
+            direction=direction,
+            entry_price=fill_price,
+            units=units,
+            sl=sl,
+            tp=tp,
+            atr=entry_atr,
+            regime=regime or "",
+            requested_price=entry_price,
+        )
+        pos = Position(
+            trade_id=trade_id,
+            instrument=self.cfg.get("symbol", "XAUUSD"),
+            direction=direction,
+            entry_price=fill_price,
+            units=units,
+            sl=sl,
+            tp=tp,
+            open_time=now,
+            atr_at_entry=entry_atr,
+            regime_at_entry=regime or "",
+            thesis=(
+                f"SQE {direction} in {regime or 'unknown'} regime "
+                "(slippage flatten pending)"
+            ),
+            thesis_valid=False,
+        )
+        self.position_monitor.add_position(pos)
+        self._daily_trade_count += 1
+        self._register_open_trade_quantlog(
+            trade_id,
+            trace_id=trace_id,
+            decision_cycle_id=decision_cycle_id,
+            session=session,
+            regime=regime,
+            direction=direction,
+            entry_price=float(fill_price),
+            signal_id=signal_id,
+        )
+        return "no_trade", "slippage_flatten_pending"
+
     def _monitor_positions(self):
         """Check open positions: close invalid thesis, update order manager."""
         for pos in list(self.position_monitor.all_positions):
             if not pos.thesis_valid:
                 logger.warning("Position %s thesis invalid — closing", pos.trade_id)
-                if not self.dry_run and self.broker.is_connected:
-                    self.broker.close_trade(pos.trade_id)
+                closed = self._close_broker_trade(pos.trade_id, context="thesis_invalid")
+                if not closed:
+                    # Keep local state with thesis_valid=False so the next cycle retries.
+                    # Removing here would emit a false trade_closed and let broker sync
+                    # resurrect the still-open trade as thesis_valid=True.
+                    logger.error(
+                        "Broker close failed for %s — retaining local position for retry",
+                        pos.trade_id,
+                    )
+                    continue
+
                 removed = self.position_monitor.remove_position(pos.trade_id)
                 self.order_manager.unregister_trade(pos.trade_id, reason="thesis_invalid")
                 if removed is not None:
