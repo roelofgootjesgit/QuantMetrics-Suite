@@ -2661,11 +2661,21 @@ class LiveRunner:
         if risk_amount_per_unit <= 0:
             return 0.0
 
-        if not self.dry_run and self.broker.is_connected:
+        if not self.dry_run:
+            # Live path must never fall back to paper_equity: a transient
+            # account-info failure would silently size against $10k and can
+            # oversize small accounts or diverge from the live risk model.
+            if not self.broker.is_connected:
+                logger.error("Live broker disconnected; refusing to size position")
+                return 0.0
             acct = self.broker.get_account_info()
-            if acct:
-                risk_usd = acct.equity * (risk_pct / 100.0)
-                return max(1, round(risk_usd / risk_amount_per_unit))
+            if not acct:
+                logger.error(
+                    "Live account info unavailable; refusing to size with paper equity"
+                )
+                return 0.0
+            risk_usd = acct.equity * (risk_pct / 100.0)
+            return max(1, round(risk_usd / risk_amount_per_unit))
 
         # Dry run default: assume $10k account
         default_equity = self.cfg.get("risk", {}).get("paper_equity", 10000.0)

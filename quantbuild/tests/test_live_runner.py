@@ -173,6 +173,32 @@ class TestGuardrails:
         expected = round(10000 * 0.01 / 2.0)
         assert units == expected
 
+    def test_calculate_units_live_refuses_paper_equity_fallback(self):
+        """Live must not size against paper_equity when account info is missing."""
+        runner = LiveRunner(_minimal_cfg(), dry_run=False)
+        runner.broker = MagicMock()
+        runner.broker.is_connected = True
+        runner.broker.get_account_info.return_value = None
+        units = runner._calculate_units(entry=2000, sl=1998, risk_pct=1.0)
+        assert units == 0.0
+
+    def test_calculate_units_live_refuses_when_disconnected(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=False)
+        runner.broker = MagicMock()
+        runner.broker.is_connected = False
+        units = runner._calculate_units(entry=2000, sl=1998, risk_pct=1.0)
+        assert units == 0.0
+
+    def test_calculate_units_live_uses_account_equity(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=False)
+        runner.broker = MagicMock()
+        runner.broker.is_connected = True
+        acct = MagicMock()
+        acct.equity = 5000.0
+        runner.broker.get_account_info.return_value = acct
+        units = runner._calculate_units(entry=2000, sl=1998, risk_pct=1.0)
+        assert units == round(5000 * 0.01 / 2.0)
+
 
 class TestRegimeSkip:
     def test_compression_skipped(self):

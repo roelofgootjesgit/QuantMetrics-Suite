@@ -88,6 +88,28 @@ class MultiAccountExecutionOrchestrator:
             spread_at_fill=lifecycle.spread_at_fill,
         )
 
+    @staticmethod
+    def _blocks_primary_backup_failover(result: AccountExecutionResult) -> bool:
+        """True when an account already holds (or likely holds) live exposure.
+
+        primary_backup must not open a second account after a partial /
+        unconfirmed / unprotected fill left residual risk on the prior account.
+        Fail closed whenever a broker trade_id is present.
+        """
+        if result.success:
+            return True
+        if result.filled_units is not None:
+            try:
+                if float(result.filled_units) > 0:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        if result.status in {"fill_unconfirmed", "protection_unconfirmed"}:
+            return True
+        if result.trade_id and str(result.trade_id).strip():
+            return True
+        return False
+
     def _quantlog_trace_id(self, request: TradeRequest) -> str:
         tid = str(getattr(request, "trace_id", "") or "").strip()
         if tid:
@@ -231,17 +253,28 @@ class MultiAccountExecutionOrchestrator:
             )
 
         elif plan.routing_mode == "primary_backup":
-            success_seen = False
+            stop_failover = False
+            prior_success = False
             for item in plan.items:
-                if success_seen:
+                if stop_failover:
+                    skip_status = (
+                        "not_attempted_after_success"
+                        if prior_success
+                        else "not_attempted_after_open_exposure"
+                    )
+                    skip_message = (
+                        "previous_account_succeeded"
+                        if prior_success
+                        else "previous_account_has_open_exposure"
+                    )
                     results.append(
                         AccountExecutionResult(
                             account_id=item.account_id,
                             attempted=False,
                             success=False,
-                            status="not_attempted_after_success",
+                            status=skip_status,
                             role=item.role,
-                            message="previous_account_succeeded",
+                            message=skip_message,
                         )
                     )
                     self._emit_event(
@@ -251,7 +284,7 @@ class MultiAccountExecutionOrchestrator:
                             "role": item.role,
                             "attempted": False,
                             "success": False,
-                            "status": "not_attempted_after_success",
+                            "status": skip_status,
                             "error": None,
                         },
                     )
@@ -282,7 +315,10 @@ class MultiAccountExecutionOrchestrator:
                     },
                 )
                 if result.success:
-                    success_seen = True
+                    prior_success = True
+                    stop_failover = True
+                elif self._blocks_primary_backup_failover(result):
+                    stop_failover = True
 
         else:  # fanout
             for item in plan.items:

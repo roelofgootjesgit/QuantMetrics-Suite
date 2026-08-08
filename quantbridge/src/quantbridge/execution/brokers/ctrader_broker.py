@@ -126,7 +126,18 @@ class CTraderBroker(BrokerContract):
             self._last_error = None
         else:
             self._last_error = result.message or result.error_code or "order_rejected"
-        return result
+        # Surface the size actually sent so lifecycle confirm matches broker state.
+        raw = dict(result.raw_response or {})
+        raw["submitted_units"] = float(normalized_units)
+        return OrderResult(
+            success=result.success,
+            order_id=result.order_id,
+            trade_id=result.trade_id,
+            fill_price=result.fill_price,
+            message=result.message,
+            error_code=result.error_code,
+            raw_response=raw,
+        )
 
     def modify_trade(self, trade_id: str, sl: Optional[float] = None, tp: Optional[float] = None) -> bool:
         ok = self.client.modify_trade(trade_id, sl=sl, tp=tp)

@@ -133,17 +133,27 @@ class OrderManager:
         timeout = timeout_seconds or self.default_fill_timeout_seconds
         interval = poll_interval_seconds or self.default_poll_interval_seconds
         deadline = time.time() + timeout
+        # Keep polling on size mismatch so late remainder fills can complete within
+        # the timeout. Only report partial_fill_detected after the deadline.
+        partial_position: Optional[Position] = None
 
         while time.time() < deadline:
             positions = self.broker.sync_positions(instrument=instrument)
+            matched = False
             for position in positions:
                 if str(position.trade_id) != str(trade_id):
                     continue
+                matched = True
                 if expected_units is not None:
                     if abs(float(position.units) - float(expected_units)) > self.protection_tolerance:
-                        return False, position, "partial_fill_detected"
+                        partial_position = position
+                        break
                 return True, position, None
+            if not matched:
+                partial_position = None
             time.sleep(interval)
+        if partial_position is not None:
+            return False, partial_position, "partial_fill_detected"
         return False, None, "fill_timeout"
 
     def ensure_protection(
@@ -247,10 +257,20 @@ class OrderManager:
                 order_ref=oref,
             )
 
+        # Brokers may normalize size on submit (lot/step). Prefer that value so
+        # confirm_fill does not false-positive partial_fill_detected.
+        expected_units = float(units)
+        raw = order.raw_response if isinstance(order.raw_response, dict) else None
+        if raw is not None and raw.get("submitted_units") is not None:
+            try:
+                expected_units = float(raw["submitted_units"])
+            except (TypeError, ValueError):
+                expected_units = float(units)
+
         fill_ok, filled_position, fill_error = self.confirm_fill(
             trade_id=order.trade_id,
             instrument=instrument,
-            expected_units=units,
+            expected_units=expected_units,
         )
         t_after_fill_mono = time.perf_counter()
         fill_latency_ms = (t_after_fill_mono - t_submit_mono) * 1000.0
@@ -284,6 +304,7 @@ class OrderManager:
                 order_id=order.order_id,
                 trade_id=order.trade_id,
                 fill_confirmed=False,
+                filled_units=filled_position.units if filled_position else None,
                 message=fill_error or "fill_not_confirmed",
                 error=fill_error or "fill_not_confirmed",
                 risk_decision=risk_decision_dict,
