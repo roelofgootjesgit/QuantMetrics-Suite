@@ -126,6 +126,22 @@ class OandaAdapter:
                 raw_response=result.raw_response,
             )
 
+        trade_id = str(result.trade_id or "").strip()
+        if not trade_id:
+            # Never promote orderId to broker_order_id — close/modify/sync need trade ids.
+            return ExecutionResult(
+                status="rejected",
+                broker=self.broker_name,
+                account_id=request.account_id,
+                symbol=instrument,
+                side=request.side,
+                requested_entry=request.entry,
+                filled_price=result.fill_price or request.entry,
+                broker_order_id="",
+                message="fill_unconfirmed: missing trade_id",
+                raw_response=result.raw_response,
+            )
+
         return ExecutionResult(
             status="filled",
             broker=self.broker_name,
@@ -134,7 +150,7 @@ class OandaAdapter:
             side=request.side,
             requested_entry=request.entry,
             filled_price=result.fill_price or request.entry,
-            broker_order_id=result.trade_id or result.order_id or "",
+            broker_order_id=trade_id,
             message=result.message or "Order filled",
             raw_response=result.raw_response,
         )
@@ -173,6 +189,22 @@ class CTraderAdapter:
                 raw_response=result.raw_response,
             )
 
+        trade_id = str(result.trade_id or "").strip()
+        if not trade_id:
+            # Never promote orderId to broker_order_id — close/modify/sync need trade ids.
+            return ExecutionResult(
+                status="rejected",
+                broker=self.broker_name,
+                account_id=request.account_id,
+                symbol=instrument,
+                side=request.side,
+                requested_entry=request.entry,
+                filled_price=result.fill_price or request.entry,
+                broker_order_id="",
+                message="fill_unconfirmed: missing trade_id",
+                raw_response=result.raw_response,
+            )
+
         return ExecutionResult(
             status="filled",
             broker=self.broker_name,
@@ -181,7 +213,7 @@ class CTraderAdapter:
             side=request.side,
             requested_entry=request.entry,
             filled_price=result.fill_price or request.entry,
-            broker_order_id=result.trade_id or result.order_id or "",
+            broker_order_id=trade_id,
             message=result.message or "Order filled",
             raw_response=result.raw_response,
         )
