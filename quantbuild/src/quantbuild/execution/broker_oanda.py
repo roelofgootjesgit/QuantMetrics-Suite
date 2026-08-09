@@ -149,9 +149,21 @@ class OandaBroker:
             response = self._client.request(r)
             fill = response.get("orderFillTransaction", {})
             if fill:
+                trade_id = (fill.get("tradeOpened") or {}).get("tradeID")
+                if not trade_id:
+                    # Fill without tradeOpened (e.g. pure close/reduce) must not look
+                    # like a new open position keyed by orderID.
+                    return OrderResult(
+                        success=False,
+                        order_id=fill.get("orderID"),
+                        trade_id=None,
+                        fill_price=float(fill.get("price", 0) or 0),
+                        message="fill_unconfirmed: missing trade_id",
+                        raw_response=response,
+                    )
                 return OrderResult(
                     success=True, order_id=fill.get("orderID"),
-                    trade_id=fill.get("tradeOpened", {}).get("tradeID"),
+                    trade_id=trade_id,
                     fill_price=float(fill.get("price", 0)), message="Order filled", raw_response=response,
                 )
             cancel = response.get("orderCancelTransaction", {})

@@ -403,6 +403,30 @@ class CTraderOpenApiClient:
         self._set_success()
         return {**spot, "instrument": symbol_name}
 
+    def _deposit_ccy_unrealized_pnl(self) -> Tuple[float, int]:
+        """Return (net unrealized PnL in deposit currency, open position count).
+
+        Spotware does not expose equity on ProtoOATrader; equity must be
+        balance + sum(netUnrealizedPnL). Prefer ProtoOAGetPositionUnrealizedPnLReq
+        so FX conversion / commission conventions match the backend.
+        """
+        from ctrader_open_api.messages.OpenApiMessages_pb2 import (
+            ProtoOAGetPositionUnrealizedPnLReq,
+        )
+
+        res = self._send_message(
+            ProtoOAGetPositionUnrealizedPnLReq(ctidTraderAccountId=int(self.account_id))
+        )
+        digits = int(getattr(res, "moneyDigits", self._money_digits) or self._money_digits)
+        items = list(getattr(res, "positionUnrealizedPnL", []) or [])
+        total = 0.0
+        for item in items:
+            raw = getattr(item, "netUnrealizedPnL", None)
+            if raw is None:
+                raw = getattr(item, "grossUnrealizedPnL", 0)
+            total += _from_money(raw, digits)
+        return total, len(items)
+
     def get_account_state(self) -> Optional[AccountState]:
         if not self.connected:
             self._set_error("session_expired: not connected")
@@ -419,15 +443,22 @@ class CTraderOpenApiClient:
                 return None
             self._money_digits = int(getattr(trader, "moneyDigits", self._money_digits) or self._money_digits)
             balance = _from_money(getattr(trader, "balance", 0), self._money_digits)
+            try:
+                unrealized_pnl, open_trade_count = self._deposit_ccy_unrealized_pnl()
+            except Exception as upl_err:
+                # Do not silently size on balance while underwater/afloat positions exist.
+                self._set_error(f"unrealized_pnl_unavailable: {upl_err}")
+                return None
+            equity = balance + unrealized_pnl
             self._set_success()
             return AccountState(
                 account_id=str(self.account_id),
                 balance=balance,
-                equity=balance,
-                unrealized_pnl=0.0,
+                equity=equity,
+                unrealized_pnl=unrealized_pnl,
                 margin_used=0.0,
-                margin_available=balance,
-                open_trade_count=len(self.get_open_trades()),
+                margin_available=max(0.0, equity),
+                open_trade_count=open_trade_count,
                 currency="USD",
             )
         except Exception as e:
@@ -476,15 +507,24 @@ class CTraderOpenApiClient:
             fill_price = 0.0
             position = getattr(res, "position", None)
             if position is not None:
-                trade_id = str(getattr(position, "positionId", ""))
+                trade_id = str(getattr(position, "positionId", "") or "")
                 fill_price = _from_price(getattr(position, "price", 0))
             order = getattr(res, "order", None)
-            order_id = str(getattr(order, "orderId", "")) if order is not None else trade_id
+            order_id = str(getattr(order, "orderId", "") or "") if order is not None else ""
 
-            if not trade_id and not order_id:
-                message = f"order_rejected: unexpected response {type(res).__name__}"
+            if not trade_id:
+                # close/modify/sync all key on positionId. Treating orderId as a
+                # filled trade_id orphans live exposure and breaks flatten paths.
+                message = (
+                    "fill_unconfirmed: missing positionId"
+                    if order_id
+                    else f"order_rejected: unexpected response {type(res).__name__}"
+                )
                 return OrderResult(
                     success=False,
+                    order_id=order_id or None,
+                    trade_id=None,
+                    fill_price=fill_price or None,
                     message=message,
                     error_code=classify_error(message),
                     raw_response={"payload": type(res).__name__},
@@ -493,8 +533,8 @@ class CTraderOpenApiClient:
             self._set_success()
             return OrderResult(
                 success=True,
-                order_id=order_id or None,
-                trade_id=trade_id or None,
+                order_id=order_id or trade_id,
+                trade_id=trade_id,
                 fill_price=fill_price or None,
                 message="order_accepted",
                 raw_response={"payload": type(res).__name__},
