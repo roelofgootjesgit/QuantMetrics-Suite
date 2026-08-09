@@ -86,14 +86,14 @@ def test_get_account_state_fails_closed_when_upl_unavailable(monkeypatch):
     client = CTraderOpenApiClient(account_id="42", access_token="tok")
     client.connected = True
     trader = SimpleNamespace(balance=10_000_00, moneyDigits=2)
+    calls = {"n": 0}
 
     def _send(req):
-        if getattr(client, "_calls", 0) == 0:
-            client._calls = 1
+        calls["n"] += 1
+        if calls["n"] == 1:
             return SimpleNamespace(trader=trader)
         raise RuntimeError("upl timeout")
 
-    client._calls = 0
     client._send_message = _send  # type: ignore[method-assign]
 
     assert client.get_account_state() is None
