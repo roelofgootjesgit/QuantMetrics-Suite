@@ -155,7 +155,12 @@ class OrderManager:
                 "peak_price": o.peak_price,
             }
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
+        # Atomic replace so a crash mid-write cannot leave truncated JSON that
+        # load_state() treats as total state loss (dropping BE/trail management).
+        tmp_path = STATE_FILE.with_suffix(f"{STATE_FILE.suffix}.tmp")
+        payload = json.dumps(state, indent=2, default=str)
+        tmp_path.write_text(payload + "\n", encoding="utf-8")
+        tmp_path.replace(STATE_FILE)
 
     def load_state(self) -> int:
         if not STATE_FILE.exists():

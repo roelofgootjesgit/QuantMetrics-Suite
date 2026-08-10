@@ -162,11 +162,17 @@ class OrderManager:
         deadline = time.time() + timeout
         amended_once = False
 
+        last_error = "protection_timeout"
         while time.time() < deadline:
             positions = self.broker.sync_positions(instrument=instrument)
             target = next((p for p in positions if str(p.trade_id) == str(trade_id)), None)
             if target is None:
-                return False, None, "position_not_found"
+                # Transient reconcile/API gaps are common right after fill; keep polling
+                # until timeout (same posture as confirm_fill) instead of failing closed
+                # on the first empty book snapshot.
+                last_error = "position_not_found"
+                time.sleep(interval)
+                continue
 
             sl_ok = (sl is None) or (
                 target.sl is not None and abs(float(target.sl) - float(sl)) <= self.protection_tolerance
@@ -181,9 +187,10 @@ class OrderManager:
                 self.broker.modify_trade(trade_id=trade_id, sl=sl, tp=tp)
                 amended_once = True
 
+            last_error = "protection_timeout"
             time.sleep(interval)
 
-        return False, None, "protection_timeout"
+        return False, None, last_error
 
     def place_and_validate(
         self,

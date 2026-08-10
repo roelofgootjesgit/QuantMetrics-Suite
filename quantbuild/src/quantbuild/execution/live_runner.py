@@ -492,16 +492,19 @@ class LiveRunner:
             return
 
         broker_trades = self.broker.get_open_trades()
-        broker_ids = {t.trade_id for t in broker_trades}
-        monitor_ids = {p.trade_id for p in self.position_monitor.all_positions}
+        broker_ids = {str(t.trade_id) for t in broker_trades}
+        monitor_ids = {str(p.trade_id) for p in self.position_monitor.all_positions}
+        managed_ids = {str(tid) for tid in self.order_manager.managed_orders.keys()}
 
         # Add new positions from broker
         for bt in broker_trades:
-            if bt.trade_id not in monitor_ids:
+            tid = str(bt.trade_id)
+            direction = bt.direction.value if hasattr(bt.direction, "value") else str(bt.direction)
+            if tid not in monitor_ids:
                 pos = Position(
-                    trade_id=bt.trade_id,
+                    trade_id=tid,
                     instrument=bt.instrument,
-                    direction=bt.direction,
+                    direction=direction,
                     entry_price=bt.entry_price,
                     units=bt.units,
                     current_price=bt.current_price,
@@ -511,9 +514,25 @@ class LiveRunner:
                     open_time=bt.open_time or datetime.now(timezone.utc),
                 )
                 self.position_monitor.add_position(pos)
-                logger.info("Synced position from broker: %s %s", bt.trade_id, bt.direction)
+                logger.info("Synced position from broker: %s %s", tid, direction)
 
-        # Remove closed positions
+            # Broker-discovered (or resurrected) positions must be managed; otherwise
+            # BE/partial/trail never run after restart/state loss/false sync wipe.
+            # Skip when SL is missing: original_sl=0 makes risk=entry and corrupts R math.
+            if tid not in managed_ids and bt.sl is not None and float(bt.sl) > 0:
+                self.order_manager.register_trade(
+                    trade_id=tid,
+                    instrument=str(bt.instrument or self.cfg.get("symbol", "XAUUSD")),
+                    direction=direction,
+                    entry_price=float(bt.entry_price),
+                    units=float(bt.units),
+                    sl=float(bt.sl),
+                    tp=float(bt.tp) if bt.tp is not None else 0.0,
+                    requested_price=float(bt.entry_price),
+                )
+                managed_ids.add(tid)
+
+        # Remove closed positions from PM (and OM)
         for mid in monitor_ids - broker_ids:
             removed = self.position_monitor.remove_position(mid)
             self.order_manager.unregister_trade(mid, reason="closed_by_broker")
@@ -533,10 +552,18 @@ class LiveRunner:
                     direction=removed.direction.value,
                 )
 
+        # Prune OM orphans that are not on the broker and not in PM.
+        # Startup loads OM state before PM is hydrated; without this, closed overnight
+        # trades remain in managed_orders forever (and get re-saved on shutdown).
+        for mid in list(managed_ids - broker_ids):
+            if mid not in {str(p.trade_id) for p in self.position_monitor.all_positions}:
+                self.order_manager.unregister_trade(mid, reason="stale_not_on_broker")
+
         # Update prices
         for bt in broker_trades:
-            self.position_monitor.update_price(bt.trade_id, bt.current_price)
-            self.order_manager.update_price(bt.trade_id, bt.current_price)
+            tid = str(bt.trade_id)
+            self.position_monitor.update_price(tid, bt.current_price)
+            self.order_manager.update_price(tid, bt.current_price)
 
     # ── Signal Evaluation ─────────────────────────────────────────────
 
