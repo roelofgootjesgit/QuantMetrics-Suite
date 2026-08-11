@@ -280,7 +280,31 @@ class CTraderBroker:
             if result.success and result.trade_id and (sl is not None or tp is not None):
                 amended = self._real_bridge.modify_trade(result.trade_id, sl=sl, tp=tp)
                 if not amended:
-                    logger.warning("Order filled but SL/TP amend failed for trade %s", result.trade_id)
+                    # Never report success for an unprotected live fill — flatten and fail closed.
+                    logger.error(
+                        "Order filled but SL/TP amend failed for trade %s — flattening unprotected position",
+                        result.trade_id,
+                    )
+                    flattened = False
+                    try:
+                        flattened = bool(self._real_bridge.close_trade(result.trade_id))
+                    except Exception as close_exc:
+                        logger.error(
+                            "Failed to flatten unprotected trade %s after SL/TP amend failure: %s",
+                            result.trade_id,
+                            close_exc,
+                        )
+                    return OrderResult(
+                        success=False,
+                        order_id=result.order_id,
+                        trade_id=result.trade_id,
+                        fill_price=result.fill_price,
+                        message=(
+                            "Filled but SL/TP amend failed; "
+                            f"flatten={'ok' if flattened else 'FAILED'}"
+                        ),
+                        raw_response=result.raw_response,
+                    )
             return OrderResult(
                 success=bool(result.success),
                 order_id=result.order_id,

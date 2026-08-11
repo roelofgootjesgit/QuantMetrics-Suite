@@ -7,10 +7,32 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from quantbridge.execution.errors import classify_error
+from quantbridge.execution.errors import BrokerError, classify_error
 from quantbridge.execution.models import AccountState, OrderResult, Position
 
 logger = logging.getLogger(__name__)
+
+# Spotware may resolve request Deferreds with these payloads instead of errbacking.
+_ERROR_RESPONSE_TYPES = frozenset(
+    {
+        "ProtoOAErrorRes",
+        "ProtoErrorRes",
+        "ProtoOAOrderErrorEvent",
+    }
+)
+
+
+def _error_message_from_response(response) -> Optional[str]:
+    """Return an error message when OpenAPI answered with an error payload."""
+    if response is None:
+        return "empty_response"
+    name = type(response).__name__
+    error_code = getattr(response, "errorCode", None)
+    if name in _ERROR_RESPONSE_TYPES or (error_code and "Error" in name):
+        desc = str(getattr(response, "description", "") or "").strip()
+        code = str(error_code or name)
+        return f"{code}: {desc}".strip().rstrip(":").strip()
+    return None
 
 
 def _from_money(value: int, digits: int = 2) -> float:
@@ -145,6 +167,14 @@ class CTraderOpenApiClient:
             request_id,
             type(response).__name__,
         )
+        err = _error_message_from_response(response)
+        if err:
+            raise BrokerError(
+                code=classify_error(err),
+                message=err,
+                retryable=False,
+                raw={"payload": type(response).__name__ if response is not None else None},
+            )
         return response
 
     def _extract_payload(self, message):
@@ -552,9 +582,13 @@ class CTraderOpenApiClient:
                 )
             self._set_success()
             return out
-        except Exception as e:
+        except BrokerError as e:
             self._set_error(f"reconcile_failed: {e}")
-            return []
+            raise
+        except Exception as e:
+            message = f"reconcile_failed: {e}"
+            self._set_error(message)
+            raise BrokerError(code="reconcile_failed", message=message, retryable=True) from e
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> bool:
         if not self.connected:

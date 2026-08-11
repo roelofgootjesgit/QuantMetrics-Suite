@@ -491,7 +491,15 @@ class LiveRunner:
         if self.dry_run or not self.broker.is_connected:
             return
 
-        broker_trades = self.broker.get_open_trades()
+        try:
+            broker_trades = self.broker.get_open_trades()
+        except Exception as e:
+            # Fail closed: never treat a query failure as "account is flat".
+            logger.warning(
+                "Broker position sync failed — keeping local positions: %s", e
+            )
+            return
+
         broker_ids = {t.trade_id for t in broker_trades}
         monitor_ids = {p.trade_id for p in self.position_monitor.all_positions}
 

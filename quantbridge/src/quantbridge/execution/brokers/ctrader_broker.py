@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from quantbridge.execution.broker_contract import BrokerContract
 from quantbridge.execution.clients.ctrader_mock_client import CTraderMockClient
 from quantbridge.execution.clients.ctrader_openapi_client import CTraderOpenApiClient
+from quantbridge.execution.errors import BrokerError
 from quantbridge.execution.health import HealthReport
 from quantbridge.execution.models import AccountState, OrderResult, Position
 from quantbridge.execution.symbol_registry import map_symbol, normalize_units
@@ -148,7 +149,21 @@ class CTraderBroker(BrokerContract):
 
     def get_open_trades(self, instrument: Optional[str] = None) -> List[Position]:
         broker_symbol = map_symbol("ctrader", instrument or self.instrument)
-        trades = self.client.get_open_trades(broker_symbol)
+        try:
+            trades = self.client.get_open_trades(broker_symbol)
+        except Exception as e:
+            self._last_error = str(getattr(self.client, "last_error", None) or e)
+            raise
+        client_err = getattr(self.client, "last_error", None)
+        if client_err:
+            # Never stamp reconcile success when the transport recorded a failure
+            # (avoids masking empty [] as a healthy flat book).
+            self._last_error = str(client_err)
+            raise BrokerError(
+                code="reconcile_failed",
+                message=str(client_err),
+                retryable=True,
+            )
         self._last_success_at = datetime.now(timezone.utc)
         self._last_error = None
         return trades
