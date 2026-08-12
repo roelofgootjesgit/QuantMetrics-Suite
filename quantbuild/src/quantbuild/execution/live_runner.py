@@ -16,7 +16,7 @@ import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 import numpy as np
@@ -124,6 +124,8 @@ class LiveRunner:
         self._daily_account_baseline_equity: Optional[float] = None
         self._daily_account_baseline_date: Optional[str] = None
         self._daily_account_baseline_set_at: Optional[str] = None
+        # Trade IDs that must keep being flattened across restarts (thesis_valid=False).
+        self._pending_flatten_ids: Set[str] = set()
         self._decision_cycle_n: int = 0
         self._report_interval_seconds: int = 3600
         self._last_status_report: datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -412,8 +414,25 @@ class LiveRunner:
             return None
 
     def _check_position_limit(self) -> bool:
-        """Return True if we can open another position."""
-        return len(self.position_monitor.open_positions) < self._max_open_positions
+        """Return True if we can open another position.
+
+        Uses local *all* tracked positions (including pending-flatten /
+        thesis-invalid) and, when live, the broker open-trade count.
+        Fail closed if the broker query errors — never open more exposure
+        when we cannot confirm the book.
+        """
+        local_count = len(self.position_monitor.all_positions)
+        broker_count = local_count
+        if not self.dry_run and getattr(self.broker, "is_connected", False):
+            try:
+                broker_count = len(self.broker.get_open_trades(instrument=None))
+            except Exception as e:
+                logger.error(
+                    "Position-limit broker query failed — blocking new entries: %s",
+                    e,
+                )
+                return False
+        return max(local_count, broker_count) < self._max_open_positions
 
     def _check_daily_loss_limit(self) -> bool:
         """Return True if daily loss limit is not breached."""
@@ -428,11 +447,68 @@ class LiveRunner:
             self._daily_trade_count = 0
             logger.info("New trading day: %s", today)
 
-    def _daily_account_state_path(self) -> Path:
+    def _runtime_state_dir(self) -> Path:
         base = Path(self.cfg.get("data", {}).get("base_path", "data/market_cache"))
         state_dir = base / "runtime_state"
         state_dir.mkdir(parents=True, exist_ok=True)
-        return state_dir / "daily_account_baseline.json"
+        return state_dir
+
+    def _daily_account_state_path(self) -> Path:
+        return self._runtime_state_dir() / "daily_account_baseline.json"
+
+    def _pending_flatten_state_path(self) -> Path:
+        return self._runtime_state_dir() / "pending_flatten.json"
+
+    def _load_pending_flatten_state(self) -> None:
+        path = self._pending_flatten_state_path()
+        if not path.exists():
+            self._pending_flatten_ids = set()
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            ids = raw.get("trade_ids", []) if isinstance(raw, dict) else raw
+            if not isinstance(ids, list):
+                raise ValueError("pending_flatten.trade_ids must be a list")
+            self._pending_flatten_ids = {str(tid) for tid in ids if tid}
+            if self._pending_flatten_ids:
+                logger.info(
+                    "Loaded %d pending-flatten trade_id(s) from %s",
+                    len(self._pending_flatten_ids),
+                    path,
+                )
+        except Exception as e:
+            logger.warning("Failed to load pending flatten state: %s", e)
+            self._pending_flatten_ids = set()
+
+    def _save_pending_flatten_state(self) -> None:
+        path = self._pending_flatten_state_path()
+        payload = {
+            "trade_ids": sorted(self._pending_flatten_ids),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        except Exception as e:
+            logger.warning("Failed to save pending flatten state: %s", e)
+
+    def _mark_thesis_invalid(self, trade_id: str, reason: str) -> None:
+        """Invalidate thesis and persist flatten intent across restarts."""
+        self.position_monitor.invalidate_thesis(trade_id, reason)
+        tid = str(trade_id)
+        if tid not in self._pending_flatten_ids:
+            self._pending_flatten_ids.add(tid)
+            self._save_pending_flatten_state()
+            logger.warning(
+                "Persisted pending flatten for %s (reason=%s)", tid, reason,
+            )
+
+    def _clear_pending_flatten(self, trade_id: str) -> None:
+        tid = str(trade_id)
+        if tid in self._pending_flatten_ids:
+            self._pending_flatten_ids.discard(tid)
+            self._save_pending_flatten_state()
 
     def _load_daily_account_state(self) -> None:
         path = self._daily_account_state_path()
@@ -498,6 +574,7 @@ class LiveRunner:
         # Add new positions from broker
         for bt in broker_trades:
             if bt.trade_id not in monitor_ids:
+                pending_flatten = str(bt.trade_id) in self._pending_flatten_ids
                 pos = Position(
                     trade_id=bt.trade_id,
                     instrument=bt.instrument,
@@ -509,14 +586,28 @@ class LiveRunner:
                     sl=bt.sl or 0.0,
                     tp=bt.tp or 0.0,
                     open_time=bt.open_time or datetime.now(timezone.utc),
+                    thesis_valid=not pending_flatten,
                 )
                 self.position_monitor.add_position(pos)
-                logger.info("Synced position from broker: %s %s", bt.trade_id, bt.direction)
+                if pending_flatten:
+                    logger.warning(
+                        "Synced broker position %s with pending flatten "
+                        "(thesis_valid=False restored)",
+                        bt.trade_id,
+                    )
+                else:
+                    logger.info("Synced position from broker: %s %s", bt.trade_id, bt.direction)
+            elif str(bt.trade_id) in self._pending_flatten_ids:
+                # Preserve flatten intent if PM already tracks the trade.
+                self.position_monitor.invalidate_thesis(
+                    bt.trade_id, "pending_flatten_restored",
+                )
 
         # Remove closed positions
         for mid in monitor_ids - broker_ids:
             removed = self.position_monitor.remove_position(mid)
             self.order_manager.unregister_trade(mid, reason="closed_by_broker")
+            self._clear_pending_flatten(mid)
             if removed is not None:
                 ex = float(removed.current_price or removed.entry_price)
                 try:
@@ -2727,7 +2818,7 @@ class LiveRunner:
                         affected = self._counter_news.check_against_positions(event, positions)
                         for hit in affected:
                             if hit["action"] == "exit":
-                                self.position_monitor.invalidate_thesis(
+                                self._mark_thesis_invalid(
                                     hit["trade_id"], hit["reason"],
                                 )
 
@@ -2839,10 +2930,22 @@ class LiveRunner:
         for pos in list(self.position_monitor.all_positions):
             if not pos.thesis_valid:
                 logger.warning("Position %s thesis invalid — closing", pos.trade_id)
+                # Keep flatten intent persisted until broker confirms close
+                # (see _sync_positions_from_broker clearing pending_flatten).
+                self._mark_thesis_invalid(pos.trade_id, "thesis_invalid_monitor")
+                close_ok = True
                 if not self.dry_run and self.broker.is_connected:
-                    self.broker.close_trade(pos.trade_id)
+                    close_ok = bool(self.broker.close_trade(pos.trade_id))
+                if not close_ok:
+                    logger.error(
+                        "Broker close failed for thesis-invalid %s — "
+                        "keeping local pending flatten for retry",
+                        pos.trade_id,
+                    )
+                    continue
                 removed = self.position_monitor.remove_position(pos.trade_id)
                 self.order_manager.unregister_trade(pos.trade_id, reason="thesis_invalid")
+                self._clear_pending_flatten(pos.trade_id)
                 if removed is not None:
                     ex = float(removed.current_price or removed.entry_price)
                     try:
@@ -2961,6 +3064,7 @@ class LiveRunner:
 
         self.order_manager.load_state()
         self._load_daily_account_state()
+        self._load_pending_flatten_state()
         self._sync_positions_from_broker()
 
         # Prime regime before first startup report so Telegram does not start at "none".
