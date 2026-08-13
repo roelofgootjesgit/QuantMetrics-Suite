@@ -116,6 +116,17 @@ class LiveRunner:
         self._max_slippage_r: float = guard_cfg.get("max_slippage_r", 0.15)
         self._max_open_positions: int = guard_cfg.get("max_open_positions", 3)
         self._max_daily_loss_r: float = cfg.get("risk", {}).get("max_daily_loss_r", 3.0)
+        # Peak-to-current closed-trade R drawdown (same units as backtest engine).
+        # <= 0 disables, matching HYP-002 configs that set 0.0 to turn it off.
+        try:
+            self._equity_kill_switch_pct: float = float(
+                cfg.get("risk", {}).get("equity_kill_switch_pct", 10.0)
+            )
+        except (TypeError, ValueError):
+            self._equity_kill_switch_pct = 10.0
+        self._cumulative_r: float = 0.0
+        self._peak_r: float = 0.0
+        self._equity_kill_latched: bool = False
 
         # Daily tracking
         self._daily_pnl_r: float = 0.0
@@ -210,6 +221,8 @@ class LiveRunner:
 
         if cfg.get("news", {}).get("enabled", False):
             self._setup_news_layer()
+
+        self._load_equity_kill_state()
 
     def _build_quantbridge_adapter(self):
         if self._broker_provider == "ctrader":
@@ -418,6 +431,160 @@ class LiveRunner:
     def _check_daily_loss_limit(self) -> bool:
         """Return True if daily loss limit is not breached."""
         return self._daily_pnl_r > -self._max_daily_loss_r
+
+    def _equity_kill_state_path(self, *, create: bool = False) -> Path:
+        base = Path(self.cfg.get("data", {}).get("base_path", "data/market_cache"))
+        state_dir = base / "runtime_state"
+        if create:
+            state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / "equity_kill_switch.json"
+
+    def _equity_drawdown_r(self) -> float:
+        return float(self._peak_r) - float(self._cumulative_r)
+
+    def _check_equity_kill_switch(self) -> bool:
+        """Return True if new entries are still allowed under the equity kill switch.
+
+        Matches backtest semantics: halt entries once peak-to-current closed-trade R
+        drawdown reaches ``equity_kill_switch_pct``. Once tripped, the latch stays
+        set across restarts until the state file is cleared.
+        """
+        if self._equity_kill_switch_pct <= 0:
+            return True
+        if self._equity_kill_latched:
+            return False
+        if self._equity_drawdown_r() >= self._equity_kill_switch_pct:
+            self._equity_kill_latched = True
+            self._save_equity_kill_state()
+            logger.warning(
+                "Equity kill switch latched: drawdown=%.2fR threshold=%.2fR peak=%.2fR cum=%.2fR",
+                self._equity_drawdown_r(),
+                self._equity_kill_switch_pct,
+                self._peak_r,
+                self._cumulative_r,
+            )
+            return False
+        return True
+
+    def _record_closed_trade_r(self, pnl_r: float) -> None:
+        """Accumulate closed-trade R for the live equity kill switch."""
+        self._cumulative_r += float(pnl_r)
+        if self._cumulative_r > self._peak_r:
+            self._peak_r = self._cumulative_r
+        if (
+            self._equity_kill_switch_pct > 0
+            and not self._equity_kill_latched
+            and self._equity_drawdown_r() >= self._equity_kill_switch_pct
+        ):
+            self._equity_kill_latched = True
+            logger.warning(
+                "Equity kill switch tripped on close: drawdown=%.2fR threshold=%.2fR",
+                self._equity_drawdown_r(),
+                self._equity_kill_switch_pct,
+            )
+        self._save_equity_kill_state()
+
+    def _load_equity_kill_state(self) -> None:
+        path = self._equity_kill_state_path()
+        if not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self._cumulative_r = float(raw.get("cumulative_r", 0.0) or 0.0)
+            self._peak_r = float(raw.get("peak_r", 0.0) or 0.0)
+            if self._peak_r < self._cumulative_r:
+                self._peak_r = self._cumulative_r
+            self._equity_kill_latched = bool(raw.get("latched", False))
+            if (
+                not self._equity_kill_latched
+                and self._equity_kill_switch_pct > 0
+                and self._equity_drawdown_r() >= self._equity_kill_switch_pct
+            ):
+                self._equity_kill_latched = True
+            logger.info(
+                "Loaded equity kill state: cum=%.2fR peak=%.2fR latched=%s",
+                self._cumulative_r,
+                self._peak_r,
+                self._equity_kill_latched,
+            )
+        except Exception as e:
+            logger.warning("Failed to load equity kill switch state: %s", e)
+
+    def _save_equity_kill_state(self) -> None:
+        payload = {
+            "cumulative_r": float(self._cumulative_r),
+            "peak_r": float(self._peak_r),
+            "latched": bool(self._equity_kill_latched),
+        }
+        try:
+            path = self._equity_kill_state_path(create=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(path)
+        except Exception as e:
+            logger.warning("Failed to save equity kill switch state: %s", e)
+
+    def _emit_equity_kill_switch_block(
+        self,
+        now: datetime,
+        regime: Optional[str],
+        current_session: str,
+        position_ok: bool,
+        daily_loss_ok: bool,
+        cycle_trace_id: str,
+        cycle_decision_id: str,
+    ) -> None:
+        logger.warning(
+            "Equity kill switch blocking entries (%.2fR drawdown >= %.2fR)",
+            self._equity_drawdown_r(),
+            self._equity_kill_switch_pct,
+        )
+        pre_ctx = self._runner_pre_signal_decision_context(
+            eval_stage="equity_kill_switch_block",
+            regime=regime,
+            session=current_session,
+            equity_drawdown_r=float(self._equity_drawdown_r()),
+            equity_kill_switch_pct=float(self._equity_kill_switch_pct),
+            peak_r=float(self._peak_r),
+            cumulative_r=float(self._cumulative_r),
+        )
+        wall_ts = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        self._emit_pipeline_gate_signal_detected(
+            trace_id=cycle_trace_id,
+            decision_cycle_id=cycle_decision_id,
+            current_session=current_session,
+            regime=regime,
+            bar_timestamp=wall_ts,
+            eval_stage="equity_kill_switch_block",
+        )
+        self._emit_signal_evaluated(
+            trace_id=cycle_trace_id,
+            decision_cycle_id=cycle_decision_id,
+            direction="NONE",
+            confidence=0.0,
+            regime=regime,
+            setup=False,
+            eval_stage="equity_kill_switch_block",
+            decision_context=pre_ctx,
+        )
+        self._log_decision_cycle(
+            now=now,
+            action="no_trade",
+            reason="equity_kill_switch_block",
+            regime=regime,
+            killzone=current_session,
+            position_ok=position_ok,
+            daily_loss_ok=daily_loss_ok,
+        )
+        self._emit_trade_action(
+            trace_id=cycle_trace_id,
+            decision_cycle_id=cycle_decision_id,
+            decision="NO_ACTION",
+            reason="equity_kill_switch_block",
+            session=current_session,
+            regime=regime,
+            decision_context=pre_ctx,
+        )
 
     def _reset_daily_tracking(self, now: datetime):
         """Reset daily counters on new trading day."""
@@ -991,6 +1158,7 @@ class LiveRunner:
         bars_to_mfe: Optional[int] = None,
     ) -> None:
         """Emit ``trade_closed`` for lifecycle closure (P0-D). Uses ENTER registration when available."""
+        self._record_closed_trade_r(pnl_r)
         if not self._quantlog:
             return
         meta = self._open_trade_quantlog.pop(trade_id, None)
@@ -1637,6 +1805,18 @@ class LiveRunner:
         )
         cycle_trace_id = _cycle.trace_id
         cycle_decision_id = _cycle.decision_cycle_id
+
+        if not self._check_equity_kill_switch():
+            self._emit_equity_kill_switch_block(
+                now,
+                regime,
+                current_session,
+                position_ok,
+                daily_loss_ok,
+                cycle_trace_id,
+                cycle_decision_id,
+            )
+            return
 
         if self._research_raw_first:
             self._check_signals_research_raw_first(
@@ -2961,6 +3141,7 @@ class LiveRunner:
 
         self.order_manager.load_state()
         self._load_daily_account_state()
+        self._load_equity_kill_state()
         self._sync_positions_from_broker()
 
         # Prime regime before first startup report so Telegram does not start at "none".
@@ -3031,6 +3212,7 @@ class LiveRunner:
         if self._telegram.enabled and self._telegram.shutdown_report_enabled():
             self._send_status_report(datetime.now(timezone.utc), reason="shutdown")
         self.order_manager.save_state()
+        self._save_equity_kill_state()
         if self._news_history:
             self._news_history.save_to_parquet()
             self._news_history.save_latest_json()
