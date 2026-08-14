@@ -31,6 +31,7 @@ _INTERNAL_TO_CANONICAL: dict[str, str] = {
     "outside_killzone": "session_blocked",
     "time_filter_block": "session_blocked",
     "position_limit_block": "position_limit_reached",
+    "max_trades_per_session": "position_limit_reached",
     "daily_loss_block": "risk_blocked",
     "bars_missing": "market_data_unavailable",
     "same_bar_already_processed": "cooldown_active",

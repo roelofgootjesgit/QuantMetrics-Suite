@@ -24,7 +24,7 @@ def _minimal_cfg():
         "regime": {},
         "regime_profiles": {
             "trend": {"tp_r": 2.0, "sl_r": 1.0, "max_trades_per_session": 3},
-            "compression": {"skip": True},
+            "compression": {"skip": True, "max_trades_per_session": 0},
             "expansion": {
                 "tp_r": 2.0, "sl_r": 1.0,
                 "allowed_sessions": ["New York", "Overlap"],
@@ -158,9 +158,11 @@ class TestGuardrails:
         runner._daily_pnl_r = -2.0
         runner._daily_date = "2025-01-01"
         now = datetime(2025, 1, 2, 10, 0, tzinfo=timezone.utc)
+        runner._session_trade_counts[("2025-01-01", "New York", "LONG")] = 3
         runner._reset_daily_tracking(now)
         assert runner._daily_pnl_r == 0.0
         assert runner._daily_date == "2025-01-02"
+        assert runner._session_trade_counts == {}
 
     def test_spread_guard_dry_run(self):
         runner = LiveRunner(_minimal_cfg(), dry_run=True)
@@ -172,6 +174,55 @@ class TestGuardrails:
         assert units > 0
         expected = round(10000 * 0.01 / 2.0)
         assert units == expected
+
+
+class TestSessionTradeLimit:
+    def test_allows_until_regime_cap(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        now = datetime(2025, 1, 1, 13, 0, tzinfo=timezone.utc)
+        for _ in range(3):
+            assert runner._check_session_trade_limit(now, "New York", "LONG", "trend")
+            runner._record_session_trade(now, "New York", "LONG")
+        assert not runner._check_session_trade_limit(now, "New York", "LONG", "trend")
+
+    def test_counts_directions_separately(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        now = datetime(2025, 1, 1, 13, 0, tzinfo=timezone.utc)
+        for _ in range(3):
+            runner._record_session_trade(now, "New York", "LONG")
+        assert not runner._check_session_trade_limit(now, "New York", "LONG", "trend")
+        assert runner._check_session_trade_limit(now, "New York", "SHORT", "trend")
+
+    def test_zero_cap_blocks_all(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        now = datetime(2025, 1, 1, 13, 0, tzinfo=timezone.utc)
+        assert runner._max_trades_per_session_for_regime("compression") == 0
+        assert not runner._check_session_trade_limit(now, "New York", "LONG", "compression")
+
+    def test_bypassed_when_position_limit_filter_off(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        runner._filter_position_limit = False
+        now = datetime(2025, 1, 1, 13, 0, tzinfo=timezone.utc)
+        for _ in range(5):
+            runner._record_session_trade(now, "New York", "LONG")
+        assert runner._check_session_trade_limit(now, "New York", "LONG", "trend")
+
+    def test_evaluate_and_execute_blocks_at_cap(self):
+        runner = LiveRunner(_minimal_cfg(), dry_run=True)
+        runner._quantlog = None
+        now = datetime(2025, 1, 1, 13, 0, tzinfo=timezone.utc)
+        for _ in range(3):
+            runner._record_session_trade(now, "New York", "LONG")
+        action, reason = runner._evaluate_and_execute(
+            "LONG",
+            pd.DataFrame(),
+            now,
+            "trend",
+            "trace_test",
+            "New York",
+        )
+        assert action == "no_trade"
+        assert reason == "max_trades_per_session"
 
 
 class TestRegimeSkip:

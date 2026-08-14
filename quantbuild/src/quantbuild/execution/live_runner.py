@@ -121,6 +121,8 @@ class LiveRunner:
         self._daily_pnl_r: float = 0.0
         self._daily_date: Optional[str] = None
         self._daily_trade_count: int = 0
+        # (date, session, LONG|SHORT) -> filled count; mirrors backtest traded_session_direction
+        self._session_trade_counts: Dict[tuple, int] = {}
         self._daily_account_baseline_equity: Optional[float] = None
         self._daily_account_baseline_date: Optional[str] = None
         self._daily_account_baseline_set_at: Optional[str] = None
@@ -419,6 +421,52 @@ class LiveRunner:
         """Return True if daily loss limit is not breached."""
         return self._daily_pnl_r > -self._max_daily_loss_r
 
+    @staticmethod
+    def _normalize_trade_direction(direction: str) -> str:
+        d = (direction or "").strip().upper()
+        if d in ("BUY", "LONG"):
+            return "LONG"
+        if d in ("SELL", "SHORT"):
+            return "SHORT"
+        return d or "LONG"
+
+    def _session_trade_key(self, now: datetime, session: str, direction: str) -> tuple:
+        return (now.strftime("%Y-%m-%d"), session or "unknown", self._normalize_trade_direction(direction))
+
+    def _max_trades_per_session_for_regime(self, regime: Optional[str]) -> int:
+        """Match backtest: regime_profiles override, else risk.max_trades_per_session (default 1)."""
+        try:
+            base_n = int(self.cfg.get("risk", {}).get("max_trades_per_session", 1))
+        except (TypeError, ValueError):
+            base_n = 1
+        if not regime:
+            return base_n
+        rp = (self.cfg.get("regime_profiles", {}) or {}).get(regime, {}) or {}
+        if not isinstance(rp, dict) or "max_trades_per_session" not in rp:
+            return base_n
+        try:
+            return int(rp["max_trades_per_session"])
+        except (TypeError, ValueError):
+            return base_n
+
+    def _check_session_trade_limit(
+        self, now: datetime, session: str, direction: str, regime: Optional[str]
+    ) -> bool:
+        """Return True if another fill is allowed for this session/direction.
+
+        Gated by ``position_limit`` like the backtest engine. ``max_trades_per_session``
+        0 (compression in prod configs) blocks all further entries.
+        """
+        if not self._filter_position_limit:
+            return True
+        max_tps = self._max_trades_per_session_for_regime(regime)
+        key = self._session_trade_key(now, session, direction)
+        return self._session_trade_counts.get(key, 0) < max_tps
+
+    def _record_session_trade(self, now: datetime, session: str, direction: str) -> None:
+        key = self._session_trade_key(now, session, direction)
+        self._session_trade_counts[key] = self._session_trade_counts.get(key, 0) + 1
+
     def _reset_daily_tracking(self, now: datetime):
         """Reset daily counters on new trading day."""
         today = now.strftime("%Y-%m-%d")
@@ -426,6 +474,7 @@ class LiveRunner:
             self._daily_date = today
             self._daily_pnl_r = 0.0
             self._daily_trade_count = 0
+            self._session_trade_counts.clear()
             logger.info("New trading day: %s", today)
 
     def _daily_account_state_path(self) -> Path:
@@ -2164,6 +2213,44 @@ class LiveRunner:
         rp = regime_profiles.get(regime, {}) if regime else {}
         llm_execution: Optional[Dict[str, Any]] = None
 
+        # Session/direction fill cap (backtest traded_session_direction)
+        if not self._check_session_trade_limit(now, session, direction, regime):
+            max_tps = self._max_trades_per_session_for_regime(regime)
+            taken = self._session_trade_counts.get(
+                self._session_trade_key(now, session, direction), 0
+            )
+            logger.info(
+                "Session trade limit reached (%s %s %s: %d >= %d)",
+                now.strftime("%Y-%m-%d"), session, self._normalize_trade_direction(direction),
+                taken, max_tps,
+            )
+            self._emit_guard_decision(
+                trace_id=trace_id,
+                decision_cycle_id=decision_cycle_id,
+                decision="BLOCK",
+                reason="max_trades_per_session",
+                guard_name="session_trade_limit",
+                session=session,
+                regime=regime,
+                threshold=float(max_tps),
+                observed_value=float(taken),
+            )
+            self._emit_trade_action(
+                trace_id=trace_id,
+                decision_cycle_id=decision_cycle_id,
+                decision="NO_ACTION",
+                reason="max_trades_per_session",
+                side=direction,
+                session=session,
+                regime=regime,
+                decision_context=_with_exec({"blocked_by": "max_trades_per_session"}),
+            )
+            if signal_id:
+                self._emit_signal_filtered(
+                    trace_id=trace_id, signal_id=signal_id, raw_reason="max_trades_per_session"
+                )
+            return "no_trade", "max_trades_per_session"
+
         # NewsGate check
         news_boost = 1.0
         if self._news_gate and self._filter_news:
@@ -2583,6 +2670,7 @@ class LiveRunner:
         )
         self.position_monitor.add_position(pos)
         self._daily_trade_count += 1
+        self._record_session_trade(now, session, direction)
         self._register_open_trade_quantlog(
             trade_id,
             trace_id=trace_id,
