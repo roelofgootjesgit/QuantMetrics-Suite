@@ -264,8 +264,16 @@ def run_london_ny_overlap_breakout_backtest(
                 },
             )
 
+        # Entry is the open of entry_i; remaining high/low of that H1 must be simulated.
         result = _simulate_trade_price_levels(
-            df, entry_i, sim_dir, entry_price, sl_price, tp_price, _cache=sim_cache
+            df,
+            entry_i,
+            sim_dir,
+            entry_price,
+            sl_price,
+            tp_price,
+            _cache=sim_cache,
+            include_entry_bar=True,
         )
 
         mfe_peak_iso = (

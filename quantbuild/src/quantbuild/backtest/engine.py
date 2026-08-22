@@ -239,8 +239,15 @@ def _simulate_trade_price_levels(
     sl_price: float,
     tp_price: float,
     _cache: dict | None = None,
+    *,
+    include_entry_bar: bool = False,
 ) -> dict:
-    """Forward simulate exit using absolute SL/TP prices (e.g. liquidity sweep + fixed-R multiples)."""
+    """Forward simulate exit using absolute SL/TP prices (e.g. liquidity sweep + fixed-R multiples).
+
+    By default the walk starts at ``entry_i + 1`` (close-of-bar / next-bar convention
+    used by HYP-001/002). Open-of-bar fills must pass ``include_entry_bar=True`` so
+    SL/TP on the fill candle are not skipped.
+    """
     if _cache is not None:
         close_arr, high_arr, low_arr, ts_arr = (
             _cache["close"],
@@ -268,7 +275,8 @@ def _simulate_trade_price_levels(
     mfe_j: Optional[int] = None
     mfe_ts: Any = None
 
-    for j in range(entry_i + 1, n):
+    start_j = entry_i if include_entry_bar else entry_i + 1
+    for j in range(start_j, n):
         lo, hi = float(low_arr[j]), float(high_arr[j])
 
         if direction == "LONG":

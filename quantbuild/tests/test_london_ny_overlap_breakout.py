@@ -156,6 +156,72 @@ def test_long_trade_pnl() -> None:
     assert abs(float(trades[0].profit_r) - 1.5) < 1e-6
 
 
+def test_open_entry_same_bar_stop_not_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HYP-003 fills at the open of entry_i; SL on that H1 must not be ignored.
+
+    Range 13:30 H=102 L=100 (size 2). Signal 14:30 close 103 → LONG.
+    Entry 15:30 open 102, SL 100, TP 105. Entry bar low 99 hits SL; the next
+    bar would print through TP. Skipping the fill bar would falsely WIN.
+    """
+    _fake_emitter_bundle(monkeypatch)
+    cfg = _base_cfg()
+    cfg["quantlog"] = {"enabled": False, "inference_requires_quantlog": False}
+    idx = pd.date_range("2026-01-08 13:30", periods=4, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0, 102.0],
+            "high": [102.0, 103.0, 103.0, 106.0],
+            "low": [100.0, 100.0, 99.0, 101.0],
+            "close": [101.0, 103.0, 100.5, 105.5],
+            "volume": [1, 1, 1, 1],
+        },
+        index=idx,
+    )
+    trades = run_london_ny_overlap_breakout_backtest(
+        cfg,
+        df,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        Path("."),
+        "XAUUSD",
+        "1h",
+    )
+    assert len(trades) == 1
+    assert trades[0].result.value == "LOSS"
+    assert abs(float(trades[0].exit_price) - 100.0) < 1e-9
+
+
+def test_open_entry_same_bar_tp_not_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Open-of-bar fill must also honor TP printed on the fill H1."""
+    _fake_emitter_bundle(monkeypatch)
+    cfg = _base_cfg()
+    cfg["quantlog"] = {"enabled": False, "inference_requires_quantlog": False}
+    idx = pd.date_range("2026-01-08 13:30", periods=4, freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [100.0, 101.0, 102.0, 102.0],
+            "high": [102.0, 103.0, 106.0, 101.0],
+            "low": [100.0, 100.0, 101.5, 90.0],
+            "close": [101.0, 103.0, 105.0, 95.0],
+            "volume": [1, 1, 1, 1],
+        },
+        index=idx,
+    )
+    trades = run_london_ny_overlap_breakout_backtest(
+        cfg,
+        df,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 2, 1, tzinfo=timezone.utc),
+        Path("."),
+        "XAUUSD",
+        "1h",
+    )
+    assert len(trades) == 1
+    assert trades[0].result.value == "WIN"
+    assert abs(float(trades[0].exit_price) - 105.0) < 1e-9
+    assert abs(float(trades[0].profit_r) - 1.5) < 1e-6
+
+
 def test_sl_bar_mfe_exclusion() -> None:
     """MFE peak is not updated on the SL bar even if that bar prints a wide high."""
     idx = pd.date_range("2026-01-09 10:00", periods=4, freq="1h", tz="UTC")
