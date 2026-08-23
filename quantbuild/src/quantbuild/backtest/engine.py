@@ -17,6 +17,7 @@ import pandas as pd
 
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.models.trade import Trade, calculate_rr
+from src.quantbuild.data.htf_align import align_completed_htf
 from src.quantbuild.data.sessions import session_from_timestamp, ENTRY_SESSIONS
 from src.quantbuild.io.parquet_loader import load_parquet, ensure_data
 from src.quantbuild.strategies.sqe_xauusd import (
@@ -118,9 +119,9 @@ def _apply_h1_gate(
     struct_cfg = sqe_cfg.get("structure_context", {"lookback": 30, "pivot_bars": 2})
     data_1h = add_structure_context(data_1h, struct_cfg)
     if direction == "LONG":
-        h1_filter = data_1h["in_bullish_structure"].reindex(data.index, method="ffill")
+        h1_filter = align_completed_htf(data_1h["in_bullish_structure"], data.index)
     else:
-        h1_filter = data_1h["in_bearish_structure"].reindex(data.index, method="ffill")
+        h1_filter = align_completed_htf(data_1h["in_bearish_structure"], data.index)
     h1_filter = h1_filter.infer_objects(copy=False).fillna(False)
     filtered = entries & h1_filter
     logger.info("Entry bars %s (after H1-gate): %d", direction, int(filtered.sum()))

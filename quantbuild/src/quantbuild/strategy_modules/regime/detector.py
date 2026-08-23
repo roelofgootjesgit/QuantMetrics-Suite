@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+from src.quantbuild.data.htf_align import align_completed_htf
 from src.quantbuild.indicators.atr import atr_ratio as compute_atr_ratio
 from src.quantbuild.strategy_modules.ict.structure_context import add_structure_context
 from src.quantbuild.strategy_modules.ict.structure_labels import RANGE
@@ -62,7 +63,7 @@ class RegimeDetector:
 
         if data_1h is not None and len(data_1h) >= 30:
             data_1h_s = add_structure_context(data_1h.copy(), struct_cfg)
-            structure = data_1h_s["structure_label"].reindex(df.index, method="ffill")
+            structure = align_completed_htf(data_1h_s["structure_label"], df.index)
         else:
             if "structure_label" not in df.columns:
                 df = add_structure_context(df, struct_cfg)

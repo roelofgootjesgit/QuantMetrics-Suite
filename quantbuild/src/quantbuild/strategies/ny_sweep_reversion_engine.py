@@ -40,6 +40,7 @@ from src.quantbuild.execution.signal_evaluated_payload import (
     new_decision_cycle_id,
 )
 from src.quantbuild.config import _load_yaml_with_extends
+from src.quantbuild.data.htf_align import align_completed_htf
 from src.quantbuild.data.sessions import session_from_timestamp
 from src.quantbuild.indicators.atr import atr as compute_atr
 from src.quantbuild.io.parquet_loader import load_parquet
@@ -605,8 +606,8 @@ def run_ny_sweep_backtest(
     bias_on = bool(((spec.get("bias") or {}).get("h1_structure") or {}).get("enabled", True))
     if bias_on and not df_1h.empty:
         df_1h_ctx = add_structure_context(df_1h.copy(), struct_cfg)
-        h1_long = df_1h_ctx["in_bullish_structure"].reindex(df.index, method="ffill").fillna(False)
-        h1_short = df_1h_ctx["in_bearish_structure"].reindex(df.index, method="ffill").fillna(False)
+        h1_long = align_completed_htf(df_1h_ctx["in_bullish_structure"], df.index).fillna(False)
+        h1_short = align_completed_htf(df_1h_ctx["in_bearish_structure"], df.index).fillna(False)
 
     funnel_logging = bool(deep.get("funnel_logging", True)) if isinstance(deep, dict) else True
     account_id = str(cfg.get("broker", {}).get("account_id") or "backtest")
