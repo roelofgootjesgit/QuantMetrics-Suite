@@ -179,8 +179,8 @@ class TestRegimeSkip:
         runner = LiveRunner(_minimal_cfg(), dry_run=True)
         runner._current_regime = "compression"
         now = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
-        # Should skip silently (compression)
-        with patch.object(runner, "_load_recent_data", return_value=pd.DataFrame()):
+        # Should skip silently (compression) before loading bars
+        with patch.object(runner, "_load_recent_data", return_value=(pd.DataFrame(), "test")):
             runner._check_signals(now)
         # No error, no crash
 
@@ -188,8 +188,113 @@ class TestRegimeSkip:
         """Expansion should be blocked outside NY/Overlap."""
         runner = LiveRunner(_minimal_cfg(), dry_run=True)
         runner._current_regime = "expansion"
-        # 8 UTC = London session
         now = datetime(2025, 1, 1, 8, 0, tzinfo=timezone.utc)
-        with patch.object(runner, "_load_recent_data", return_value=pd.DataFrame()):
+        data = _ohlc_ending_at("2025-01-01 07:45", n=120)
+        with patch.object(runner, "_load_recent_data", return_value=(data, "test")):
             runner._check_signals(now)
         # Should silently skip — no crash
+
+
+def _ohlc_ending_at(end_ts: str, n: int = 120) -> pd.DataFrame:
+    idx = pd.date_range(end=pd.Timestamp(end_ts, tz="UTC"), periods=n, freq="15min")
+    close = np.full(n, 2000.0)
+    return pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.ones(n),
+        },
+        index=idx,
+    )
+
+
+class TestLiveSessionUsesBarTimestamp:
+    """Session/hour gates must use the signal bar open time, not wall clock.
+
+    Completed 15m bars are open-indexed: the 09:45 London bar first appears at 10:00
+    when wall clock is already Overlap. Production expansion is NY/Overlap only.
+    """
+
+    def _runner(self) -> LiveRunner:
+        cfg = {
+            **_minimal_cfg(),
+            "quantlog": {"enabled": False},
+            "filters": {"cooldown": False},
+        }
+        runner = LiveRunner(cfg, dry_run=True)
+        runner._current_regime = "expansion"
+        return runner
+
+    def test_expansion_london_bar_blocked_after_overlap_clock(self):
+        runner = self._runner()
+        data = _ohlc_ending_at("2025-01-02 09:45", n=120)
+        now = datetime(2025, 1, 2, 10, 5, tzinfo=timezone.utc)
+        executed = []
+        with patch.object(runner, "_load_recent_data", return_value=(data, "ctrader")):
+            with patch.object(
+                runner, "_evaluate_and_execute", side_effect=lambda *a, **k: executed.append(1) or ("enter", "ok")
+            ):
+                with patch.object(runner, "_compute_sqe_signal_state") as sqe:
+                    runner._check_signals(now)
+        assert executed == []
+        sqe.assert_not_called()
+
+    def test_naive_utc_index_london_bar_also_blocked(self):
+        """Parquet cache strips tz; open-indexed 09:45 must still be London."""
+        runner = self._runner()
+        data = _ohlc_ending_at("2025-01-02 09:45", n=120)
+        data.index = data.index.tz_localize(None)
+        now = datetime(2025, 1, 2, 10, 5, tzinfo=timezone.utc)
+        executed = []
+        with patch.object(runner, "_load_recent_data", return_value=(data, "ctrader")):
+            with patch.object(
+                runner, "_evaluate_and_execute", side_effect=lambda *a, **k: executed.append(1) or ("enter", "ok")
+            ):
+                runner._check_signals(now)
+        assert executed == []
+
+    def test_expansion_overlap_bar_still_reaches_execution(self):
+        runner = self._runner()
+        data = _ohlc_ending_at("2025-01-02 10:00", n=120)
+        now = datetime(2025, 1, 2, 10, 20, tzinfo=timezone.utc)
+        last_idx = len(data) - 1
+        dummy_df = data.copy()
+        executed = []
+
+        def _sqe(_data):
+            return dummy_df, last_idx, {}, ["LONG"], True, False
+
+        with patch.object(runner, "_load_recent_data", return_value=(data, "ctrader")):
+            with patch.object(runner, "_compute_sqe_signal_state", side_effect=_sqe):
+                with patch.object(
+                    runner,
+                    "_evaluate_and_execute",
+                    side_effect=lambda *a, **k: executed.append(a[0]) or ("enter", "all_conditions_met"),
+                ):
+                    with patch(
+                        "src.quantbuild.execution.live_runner.sqe_decision_context_at_bar",
+                        return_value={},
+                    ):
+                        runner._check_signals(now)
+        assert executed == ["LONG"]
+
+    def test_should_evaluate_just_closed_ny_bar_after_asia_clock(self):
+        runner = self._runner()
+        at_close = datetime(2025, 1, 2, 16, 5, tzinfo=timezone.utc)
+        later = datetime(2025, 1, 2, 16, 20, tzinfo=timezone.utc)
+        assert runner._should_evaluate_entry_signals(at_close) is True
+        assert runner._should_evaluate_entry_signals(later) is False
+
+    def test_regime_session_gate_uses_bar_hour_not_wall_clock(self):
+        runner = self._runner()
+        london_bar = datetime(2025, 1, 2, 9, 45, tzinfo=timezone.utc)
+        session, reason, extras = runner._regime_session_gate("expansion", london_bar)
+        assert session == "London"
+        assert reason == "outside_killzone"
+        overlap_bar = datetime(2025, 1, 2, 10, 0, tzinfo=timezone.utc)
+        session, reason, extras = runner._regime_session_gate("expansion", overlap_bar)
+        assert session == "Overlap"
+        assert reason is None
+        assert extras["hour_utc"] == 10
