@@ -20,6 +20,22 @@ def _from_money(value: int, digits: int = 2) -> float:
         return float(value)
 
 
+# Spotware relative prices are always 1/100000 of a price unit, then rounded
+# to symbol digits. 107716 → 1.07716 (EURUSD); 47452000 → 474.52 (XAU-like).
+# https://help.ctrader.com/open-api/symbol-data/
+_RELATIVE_PRICE_DIVISOR = 100000.0
+
+
+def _from_relative_price(value: int, digits: int = 5) -> float:
+    """Decode a ProtoOATrendbar relative price (low / low+delta)."""
+    try:
+        raw = float(value)
+        places = max(0, int(digits))
+    except (TypeError, ValueError):
+        return 0.0
+    return round(raw / _RELATIVE_PRICE_DIVISOR, places)
+
+
 def _from_price(value: int) -> float:
     # cTrader commonly represents prices in 1/100000 precision.
     try:
@@ -340,7 +356,6 @@ class CTraderOpenApiClient:
             return None
 
         digits = int(self._symbol_digits_by_id.get(symbol_id, 5))
-        price_scale = 10 ** digits
 
         low_raw = int(getattr(trendbar, "low", 0) or 0)
         delta_open = int(getattr(trendbar, "deltaOpen", 0) or 0)
@@ -348,10 +363,10 @@ class CTraderOpenApiClient:
         delta_high = int(getattr(trendbar, "deltaHigh", 0) or 0)
         volume = float(getattr(trendbar, "volume", 0) or 0)
 
-        low = low_raw / price_scale
-        open_ = (low_raw + delta_open) / price_scale
-        close = (low_raw + delta_close) / price_scale
-        high = (low_raw + delta_high) / price_scale
+        low = _from_relative_price(low_raw, digits)
+        open_ = _from_relative_price(low_raw + delta_open, digits)
+        close = _from_relative_price(low_raw + delta_close, digits)
+        high = _from_relative_price(low_raw + delta_high, digits)
         ts = datetime.fromtimestamp(ts_minutes * 60, tz=timezone.utc)
 
         return {
