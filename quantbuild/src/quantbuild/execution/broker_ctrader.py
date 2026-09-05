@@ -240,7 +240,11 @@ class CTraderBroker:
             symbol = instrument or self.instrument
             for _ in range(3):
                 px = self._real_bridge.get_current_price(instrument=symbol)
-                if px is not None and "ask" in px and "bid" in px:
+                if (
+                    px is not None
+                    and float(px.get("ask") or 0) > 0
+                    and float(px.get("bid") or 0) > 0
+                ):
                     return px
                 time.sleep(0.35)
             return None
