@@ -31,6 +31,46 @@ def _from_price(value: int) -> float:
     return v
 
 
+def _optional_spot_price(message: object, field_name: str) -> Optional[float]:
+    """Decode an optional ProtoOASpotEvent bid/ask.
+
+    Spotware marks both fields optional: a tick often carries only the side
+    that changed. Unset proto fields default to 0 — that must not overwrite
+    the last good quote.
+    """
+    has_field = getattr(message, "HasField", None)
+    if callable(has_field):
+        try:
+            if not has_field(field_name):
+                return None
+        except (ValueError, TypeError):
+            return None
+    raw = getattr(message, field_name, None)
+    if raw is None:
+        return None
+    try:
+        raw_int = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if raw_int <= 0:
+        return None
+    price = _from_price(raw_int)
+    if price <= 0:
+        return None
+    return price
+
+
+def _quote_sides_valid(quote: Optional[Dict[str, float]]) -> bool:
+    if not quote:
+        return False
+    try:
+        bid = float(quote.get("bid") or 0.0)
+        ask = float(quote.get("ask") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return bid > 0.0 and ask > 0.0
+
+
 class CTraderOpenApiClient:
     """Real cTrader Open API transport client.
 
@@ -177,8 +217,14 @@ class CTraderOpenApiClient:
         symbol_id = int(getattr(message, "symbolId", 0))
         if symbol_id <= 0:
             return
-        bid = _from_price(getattr(message, "bid", 0))
-        ask = _from_price(getattr(message, "ask", 0))
+        prev = self._spot_by_symbol_id.get(symbol_id) or {}
+        incoming_bid = _optional_spot_price(message, "bid")
+        incoming_ask = _optional_spot_price(message, "ask")
+        bid = incoming_bid if incoming_bid is not None else float(prev.get("bid") or 0.0)
+        ask = incoming_ask if incoming_ask is not None else float(prev.get("ask") or 0.0)
+        if bid <= 0.0 or ask <= 0.0:
+            # Incomplete first tick — wait for both sides before publishing.
+            return
         self._spot_by_symbol_id[symbol_id] = {
             "bid": bid,
             "ask": ask,
@@ -397,7 +443,7 @@ class CTraderOpenApiClient:
                     break
                 time.sleep(0.25)
         spot = self._spot_by_symbol_id.get(symbol_id)
-        if spot is None:
+        if not _quote_sides_valid(spot):
             self._set_error("price_unavailable")
             return None
         self._set_success()
@@ -518,7 +564,10 @@ class CTraderOpenApiClient:
 
             symbol_name, symbol_id = self._resolve_symbol(instrument)
             px = self.get_current_price(symbol_name) if symbol_id is not None else None
-            mid = ((px["ask"] + px["bid"]) / 2.0) if px else 0.0
+            if _quote_sides_valid(px):
+                mid = (float(px["ask"]) + float(px["bid"])) / 2.0
+            else:
+                mid = 0.0
 
             res = self._send_message(
                 ProtoOAReconcileReq(ctidTraderAccountId=int(self.account_id))
