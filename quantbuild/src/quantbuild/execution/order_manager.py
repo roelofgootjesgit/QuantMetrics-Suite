@@ -81,14 +81,17 @@ class OrderManager:
         if risk <= 0:
             return
 
+        dirty = False
         if order.direction == "LONG":
             current_r = (current_price - order.entry_price) / risk
             if current_price > order.peak_price:
                 order.peak_price = current_price
+                dirty = True
         else:
             current_r = (order.entry_price - current_price) / risk
             if current_price < order.peak_price or order.peak_price == order.entry_price:
                 order.peak_price = current_price
+                dirty = True
 
         # Break-even
         be_cfg = self.config.get("break_even", {})
@@ -98,6 +101,7 @@ class OrderManager:
             if self._modify_sl(trade_id, new_sl):
                 order.current_sl = new_sl
                 order.break_even_set = True
+                dirty = True
                 self._notify("BREAK_EVEN", order, {"new_sl": new_sl})
 
         # Partial close
@@ -107,6 +111,7 @@ class OrderManager:
             if units_to_close > 0 and self._partial_close(trade_id, units_to_close):
                 order.partial_closed = True
                 order.units -= units_to_close
+                dirty = True
                 self._notify("PARTIAL_CLOSE", order, {"closed_units": units_to_close})
 
         # Trailing stop
@@ -118,11 +123,18 @@ class OrderManager:
                 if new_sl > order.current_sl and self._modify_sl(trade_id, new_sl):
                     order.current_sl = new_sl
                     order.trailing_active = True
+                    dirty = True
             else:
                 new_sl = order.peak_price + trail_distance
                 if new_sl < order.current_sl and self._modify_sl(trade_id, new_sl):
                     order.current_sl = new_sl
                     order.trailing_active = True
+                    dirty = True
+
+        # Persist BE / partial / trail flags. register/unregister were the only
+        # writers; SIGTERM (systemd / launch_live_safe timeout) skips finally.
+        if dirty:
+            self.save_state()
 
     def _modify_sl(self, trade_id: str, new_sl: float) -> bool:
         if self.broker:

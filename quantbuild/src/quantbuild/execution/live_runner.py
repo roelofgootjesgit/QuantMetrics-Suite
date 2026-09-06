@@ -2973,6 +2973,7 @@ class LiveRunner:
 
         self._running = True
         signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
 
         check_interval = self.cfg.get("execution", {}).get("check_interval_seconds", 60)
         regime_interval = self.cfg.get("execution", {}).get("regime_update_seconds", 900)
