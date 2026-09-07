@@ -347,10 +347,18 @@ class CTraderBroker:
                 return False
             close_units = units
             if close_units is None:
-                for p in self._real_bridge.get_open_trades():
+                try:
+                    open_trades = self._real_bridge.get_open_trades()
+                except Exception:
+                    open_trades = []
+                for p in open_trades:
                     if str(p.trade_id) == str(trade_id):
                         close_units = float(p.units)
                         break
+            # cTrader OpenAPI requires ProtoOAClosePositionReq.volume; 0 / omitted is a no-op.
+            if close_units is None or float(close_units) <= 0:
+                logger.error("cTrader close refused: missing volume for trade %s", trade_id)
+                return False
             return bool(self._real_bridge.close_trade(trade_id, units=close_units))
 
         if not self.is_connected:
