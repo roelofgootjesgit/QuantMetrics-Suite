@@ -31,6 +31,26 @@ def _from_price(value: int) -> float:
     return v
 
 
+def _close_volume_cents(units: Optional[float], open_trades: List[Position], trade_id: str) -> Optional[int]:
+    """Resolve ProtoOAClosePositionReq.volume (required, cents). 0 is invalid."""
+    if units is not None:
+        try:
+            volume = int(units)
+        except (TypeError, ValueError):
+            return None
+        return volume if volume > 0 else None
+    target = str(trade_id)
+    for position in open_trades:
+        if str(getattr(position, "trade_id", "")) != target:
+            continue
+        try:
+            volume = int(float(position.units))
+        except (TypeError, ValueError):
+            return None
+        return volume if volume > 0 else None
+    return None
+
+
 class CTraderOpenApiClient:
     """Real cTrader Open API transport client.
 
@@ -560,15 +580,26 @@ class CTraderOpenApiClient:
         if not self.connected:
             self._set_error("session_expired: not connected")
             return False
+        if units is None:
+            try:
+                volume = _close_volume_cents(None, self.get_open_trades(), trade_id)
+            except Exception as e:
+                self._set_error(f"close_failed: missing_close_volume ({e})")
+                return False
+        else:
+            volume = _close_volume_cents(units, [], trade_id)
+        if volume is None:
+            # ProtoOAClosePositionReq.volume is required; 0 does not close the position.
+            self._set_error("close_failed: missing_close_volume")
+            return False
         try:
             from ctrader_open_api.messages.OpenApiMessages_pb2 import ProtoOAClosePositionReq
 
             req = ProtoOAClosePositionReq(
                 ctidTraderAccountId=int(self.account_id),
                 positionId=int(trade_id),
+                volume=int(volume),
             )
-            if units is not None:
-                req.volume = int(units)
             self._send_message(req)
             self._set_success()
             return True
