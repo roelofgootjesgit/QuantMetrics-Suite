@@ -2,7 +2,9 @@
 """Throughput Discovery Experiment Matrix (QuantOS runner).
 
 Runs a baseline QuantBuild backtest config plus controlled YAML variants, then for each run:
+- stamps a unique ``quantlog.run_id`` (avoids systemd/CI ``INVOCATION_ID`` collisions)
 - consolidates QuantLog day JSONL into ``quantbuild/data/quantlog_events/runs/<run_id>.jsonl``
+  (or keeps the emitter-written consolidated file when there are no day shards)
 - bundles artifacts under ``quantmetrics_os/runs/<experiment>/<role>/``
 - runs QuantAnalytics guard attribution CLI
 - runs QuantOS promotion gate (optionally vs baseline drawdown)
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -132,41 +135,85 @@ def _extract_run_id_from_log(log_path: Path) -> str | None:
     return None
 
 
+def _count_run_events(path: Path, run_id: str) -> int:
+    if not path.is_file():
+        return 0
+    kept = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and obj.get("run_id") == run_id:
+                kept += 1
+    return kept
+
+
+def _stamp_unique_variant_run_id(cfg: dict[str, Any], variant_key: str) -> str:
+    """Force a unique QuantLog run_id so matrix variants never share INVOCATION_ID."""
+    token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_key = "".join(c if c.isalnum() or c in "-_" else "_" for c in variant_key.strip()) or "variant"
+    run_id = f"td_{safe_key}_{token}_{uuid4().hex[:8]}"
+    existing = cfg.get("quantlog") if isinstance(cfg.get("quantlog"), dict) else {}
+    cfg["quantlog"] = {**existing, "run_id": run_id}
+    return run_id
+
+
 def _consolidate_run_jsonl(*, quantbuild_root: Path, run_id: str) -> Path:
+    """Build runs/<run_id>.jsonl from day shards, or keep an emitter-written file.
+
+    Production QuantBuild configs set ``quantlog.consolidated_run_file: true``, so
+    events land only in ``runs/<run_id>.jsonl`` (no day shards). Opening that
+    path with ``"w"`` before scanning shards would truncate the only copy.
+    """
     root = quantbuild_root / "data" / "quantlog_events"
     out_dir = root / "runs"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{run_id}.jsonl"
+    tmp_path = out_dir / f".{run_id}.jsonl.tmp"
 
     kept = 0
     scanned = 0
-    with out_path.open("w", encoding="utf-8") as writer:
-        # Day shards live at: data/quantlog_events/<YYYY-MM-DD>/quantbuild.jsonl
-        candidates = sorted(root.glob("*/quantbuild.jsonl"))
-        if not candidates:
-            candidates = sorted(root.rglob("quantbuild.jsonl"))
-        for day_jsonl in candidates:
-            if "runs" in day_jsonl.parts:
-                continue
-            if not day_jsonl.is_file():
-                continue
-            scanned += 1
-            with day_jsonl.open("r", encoding="utf-8") as handle:
-                for raw in handle:
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    obj = json.loads(line)
-                    if obj.get("run_id") == run_id:
-                        writer.write(raw if raw.endswith("\n") else raw + "\n")
-                        kept += 1
+    try:
+        with tmp_path.open("w", encoding="utf-8") as writer:
+            # Day shards live at: data/quantlog_events/<YYYY-MM-DD>/quantbuild.jsonl
+            candidates = sorted(root.glob("*/quantbuild.jsonl"))
+            if not candidates:
+                candidates = sorted(root.rglob("quantbuild.jsonl"))
+            for day_jsonl in candidates:
+                if "runs" in day_jsonl.parts:
+                    continue
+                if not day_jsonl.is_file():
+                    continue
+                scanned += 1
+                with day_jsonl.open("r", encoding="utf-8") as handle:
+                    for raw in handle:
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        obj = json.loads(line)
+                        if obj.get("run_id") == run_id:
+                            writer.write(raw if raw.endswith("\n") else raw + "\n")
+                            kept += 1
+        if kept > 0:
+            tmp_path.replace(out_path)
+            return out_path
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
 
-    if kept == 0:
-        raise RuntimeError(
-            f"Consolidation produced 0 events for run_id={run_id} (scanned_files={scanned}). "
-            f"Expected day JSONL under: {root}"
-        )
-    return out_path
+    # Emitter already wrote the consolidated file (no day shards). Keep it.
+    if _count_run_events(out_path, run_id) > 0:
+        return out_path
+
+    raise RuntimeError(
+        f"Consolidation produced 0 events for run_id={run_id} (scanned_files={scanned}). "
+        f"Expected day JSONL under {root} or an existing {out_path}"
+    )
 
 
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
@@ -184,10 +231,13 @@ def _run_backtest(
     config_rel: str,
     start_date: str,
     end_date: str,
+    run_id: str | None = None,
 ) -> Path:
     env = os.environ.copy()
     extra = str(qb_root.resolve())
     env["PYTHONPATH"] = f"{extra}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else extra
+    if run_id:
+        env["QUANTBUILD_RUN_ID"] = run_id
 
     cmd = [
         python_exe,
@@ -602,19 +652,18 @@ def main() -> int:
             merged["filters"] = {**existing_filters, **spec.filter_overrides}
         if spec.config_overlay:
             merged = _deep_merge(merged, spec.config_overlay)
+        run_id = _stamp_unique_variant_run_id(merged, spec.key)
         _dump_yaml(merged, variant_path)
 
         rel_config = str(variant_path.resolve().relative_to(qb_root)).replace("\\", "/")
-        latest_log = _run_backtest(
+        _run_backtest(
             qb_root=qb_root,
             python_exe=qb_python,
             config_rel=rel_config,
             start_date=args.start_date,
             end_date=args.end_date,
+            run_id=run_id,
         )
-        run_id = _extract_run_id_from_log(latest_log)
-        if not run_id:
-            raise RuntimeError(f"Missing run_id for {spec.key}")
 
         consolidated = _consolidate_run_jsonl(quantbuild_root=qb_root, run_id=run_id)
         role_dir = _bundle_run(
