@@ -129,3 +129,36 @@ class QuantLogEmitter:
             raise
         return event
 
+    def reset_consolidated_file(self) -> None:
+        """Replace any existing consolidated JSONL so this run is the only source of events.
+
+        Emit always appends. Named backtest configs pin ``run_id`` (e.g.
+        ``bt_2025_full_production``) and set ``consolidated_run_file: true``, so a
+        re-run would otherwise mix or leave stale ``trade_closed`` events for
+        QuantAnalytics / QuantOS collect. Live emitters leave ``consolidated_path``
+        unset and keep day-shard append behaviour.
+        """
+        if self.consolidated_path is None:
+            return
+        self.consolidated_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.consolidated_path.with_suffix(self.consolidated_path.suffix + ".lock")
+        existed_nonempty = False
+        try:
+            with FileLock(str(lock_path), timeout=30):
+                existed_nonempty = (
+                    self.consolidated_path.is_file() and self.consolidated_path.stat().st_size > 0
+                )
+                self.consolidated_path.write_text("", encoding="utf-8")
+        except Timeout:
+            logger.error(
+                "QuantLog file lock timeout (%s) — cannot reset consolidated file",
+                lock_path,
+            )
+            raise
+        if existed_nonempty:
+            logger.info(
+                "QuantLog consolidated file reset for run_id=%s path=%s",
+                self.run_id,
+                self.consolidated_path,
+            )
+
