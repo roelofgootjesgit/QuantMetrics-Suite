@@ -171,6 +171,119 @@ class TestBacktestQuantLog:
         if sf:
             assert all(e.get("decision_cycle_id") for e in sf), "signal_filtered should carry decision_cycle_id"
 
+    def test_init_replaces_stale_consolidated_file(self, tmp_path):
+        """Pinned run_id re-runs must not keep prior trade_closed events in the JSONL."""
+        from src.quantbuild.backtest.engine import _init_backtest_quantlog
+
+        ql_dir = tmp_path / "quantlog_stale"
+        run_id = "bt_2025_full_production"
+        dest = ql_dir / "runs" / f"{run_id}.jsonl"
+        dest.parent.mkdir(parents=True)
+        stale = {
+            "event_id": "stale-event-id",
+            "event_type": "trade_closed",
+            "run_id": run_id,
+            "payload": {"pnl_r": 2.5, "exit": "TP"},
+        }
+        dest.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+
+        emitter = _init_backtest_quantlog(
+            {
+                "quantlog": {
+                    "enabled": True,
+                    "base_path": str(ql_dir),
+                    "environment": "backtest",
+                    "run_id": run_id,
+                    "session_id": "bt_2025_full_year",
+                    "consolidated_run_file": True,
+                }
+            }
+        )
+        assert emitter is not None
+        assert dest.is_file()
+        leftover = dest.read_text(encoding="utf-8")
+        assert "stale-event-id" not in leftover
+        assert "trade_closed" not in leftover
+
+        emitter.emit(
+            event_type="signal_detected",
+            trace_id="trace_fresh",
+            payload={"signal_id": "sig_fresh"},
+            timestamp_utc="2025-06-01T12:00:00Z",
+            decision_cycle_id="dc_fresh",
+        )
+        lines = [ln for ln in dest.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert len(lines) == 1
+        fresh = json.loads(lines[0])
+        assert fresh["event_type"] == "signal_detected"
+        assert fresh["payload"]["signal_id"] == "sig_fresh"
+        assert "stale-event-id" not in dest.read_text(encoding="utf-8")
+
+    def test_rerun_zero_trades_does_not_keep_stale_closed_events(self, tmp_path, monkeypatch):
+        """A zero-trade re-run of a named production config must not feed stale PnL to analytics."""
+        import src.quantbuild.backtest.engine as eng
+
+        df = _make_ohlcv(320)
+        precomputed = pd.Series("trend", index=df.index)
+        ql_dir = tmp_path / "quantlog_rerun"
+        run_id = "bt_2025_full_production"
+        dest = ql_dir / "runs" / f"{run_id}.jsonl"
+        dest.parent.mkdir(parents=True)
+        dest.write_text(
+            json.dumps(
+                {
+                    "event_id": "stale-win",
+                    "event_type": "trade_closed",
+                    "run_id": run_id,
+                    "payload": {"pnl_r": 3.0, "exit": "TP"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        def fake_load_parquet(base_path, symbol, timeframe, start=None, end=None):
+            if timeframe == "15m":
+                return df
+            return pd.DataFrame()
+
+        def fake_run_sqe(data, direction, sqe_cfg, _precomputed_df=None):
+            return pd.Series(False, index=data.index)
+
+        monkeypatch.setattr(eng, "load_parquet", fake_load_parquet)
+        monkeypatch.setattr(eng, "ensure_data", lambda **kwargs: df)
+        monkeypatch.setattr(eng, "run_sqe_conditions", fake_run_sqe)
+
+        cfg = {
+            "symbol": "XAUUSD",
+            "timeframes": ["15m"],
+            "data": {"base_path": str(tmp_path / "data")},
+            "backtest": {"default_period_days": 365, "tp_r": 2.0, "sl_r": 1.0, "session_mode": "extended"},
+            "risk": {"max_daily_loss_r": 99.0, "equity_kill_switch_pct": 99.0},
+            "strategy": {},
+            "quantlog": {
+                "enabled": True,
+                "base_path": str(ql_dir),
+                "environment": "backtest",
+                "run_id": run_id,
+                "session_id": "bt_2025_full_year",
+                "consolidated_run_file": True,
+            },
+            "news": {"enabled": False},
+        }
+
+        trades = run_backtest(cfg, precomputed_regime=precomputed)
+        assert trades == []
+        assert dest.is_file()
+        text = dest.read_text(encoding="utf-8")
+        assert "stale-win" not in text
+        closed = [
+            json.loads(ln)
+            for ln in text.splitlines()
+            if ln.strip() and json.loads(ln).get("event_type") == "trade_closed"
+        ]
+        assert closed == []
+
     def test_inference_requires_quantlog_raises_when_quantlog_disabled(self, tmp_path, monkeypatch):
         import src.quantbuild.backtest.engine as eng
 

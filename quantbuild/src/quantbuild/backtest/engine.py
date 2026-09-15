@@ -76,6 +76,9 @@ def _init_backtest_quantlog(cfg: Dict[str, Any]) -> Optional[QuantLogEmitter]:
         session_id=session_id,
         consolidated_path=consolidated_path,
     )
+    # One backtest run owns this file. Emit appends, so a pinned run_id re-run
+    # must not keep prior trade_closed events for analytics / artifact collect.
+    emitter.reset_consolidated_file()
     if consolidated_path is not None:
         logger.info(
             "QuantLog emitter enabled (backtest): consolidated_run_file=%s run_id=%s",
