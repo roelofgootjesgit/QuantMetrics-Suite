@@ -1,5 +1,6 @@
 """Counter-news detector for gold positions — checks if new headlines contradict open thesis."""
 import logging
+import re
 from typing import Any
 
 from src.quantbuild.models.news_event import NormalizedNewsEvent
@@ -15,6 +16,18 @@ _CONTRADICTION_PAIRS = [
     ({"war", "conflict", "escalation", "crisis", "risk"},
      {"peace", "ceasefire", "de-escalation", "agreement", "deal"}),
 ]
+
+
+def _keyword_in_text(keyword: str, text: str) -> bool:
+    """True when ``keyword`` is its own word, plus a short inflection (crashes, dropped).
+
+    Substring search treats ``up`` as a hit inside ``supply`` and ``war`` inside
+    ``warning``. Those false directions invalidate live theses and flatten positions.
+    """
+    last = keyword[-1:]
+    doubled = re.escape(last) + "?" if last.isalpha() and last not in "aeiou" else ""
+    pattern = rf"\b{re.escape(keyword)}{doubled}(?:es|ed|ing|s)?\b"
+    return re.search(pattern, text) is not None
 
 
 class CounterNewsDetector:
@@ -85,10 +98,10 @@ class CounterNewsDetector:
         bear_hits = 0
         for bull_set, bear_set in _CONTRADICTION_PAIRS:
             for word in bull_set:
-                if word in text:
+                if _keyword_in_text(word, text):
                     bull_hits += 1
             for word in bear_set:
-                if word in text:
+                if _keyword_in_text(word, text):
                     bear_hits += 1
         if bull_hits > bear_hits:
             return "bullish"
