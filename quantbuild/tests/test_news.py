@@ -187,6 +187,37 @@ class TestCounterNews:
         affected = detector.check_against_positions(event, [position])
         assert len(affected) > 0
         assert affected[0]["trade_id"] == "T1"
+        assert affected[0]["action"] == "exit"
+
+    def test_substring_keywords_do_not_flatten_live_thesis(self):
+        """'up' inside supply and 'war' inside warning must not close a position."""
+        detector = CounterNewsDetector({"news": {"counter_news": {"exit_threshold": 0.8}}})
+        short = Position(
+            trade_id="T-SHORT", instrument="XAU_USD", direction="SHORT",
+            entry_price=2000.0, units=1.0, sl=2010.0, tp=1980.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        supply = _make_event(
+            "Central banks outline gold supply plans for the year",
+            topics=["gold"],
+        )
+        assert detector.check_against_positions(supply, [short]) == []
+
+        long = Position(
+            trade_id="T-LONG", instrument="XAU_USD", direction="LONG",
+            entry_price=2000.0, units=1.0, sl=1990.0, tp=2020.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        warning = _make_event(
+            "Fed inflation warning leaves gold steady",
+            topics=["gold", "central_banks"],
+        )
+        assert detector.check_against_positions(warning, [long]) == []
+
+        real_drop = _make_event("Gold prices fall after the Fed meeting", topics=["gold"])
+        hit = detector.check_against_positions(real_drop, [long])
+        assert len(hit) == 1
+        assert hit[0]["action"] == "exit"
 
 
 class TestLLMTradeAdvisor:
