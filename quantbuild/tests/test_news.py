@@ -187,6 +187,95 @@ class TestCounterNews:
         affected = detector.check_against_positions(event, [position])
         assert len(affected) > 0
         assert affected[0]["trade_id"] == "T1"
+        assert affected[0]["action"] == "exit"
+
+    def test_non_gold_price_verbs_do_not_flatten(self):
+        """A tier-1 oil or bank headline must not close a gold position.
+
+        Strict prod marks Reuters as tier 1 and treats a commodities topic as
+        gold-related. 'Oil prices rise' used to score 0.8 and exit a short.
+        """
+        detector = CounterNewsDetector({"news": {"counter_news": {"exit_threshold": 0.8}}})
+        normalizer = NewsNormalizer({})
+        oil = normalizer.normalize(
+            RawNewsItem(
+                source_name="Reuters Business",
+                headline="Oil prices rise as Middle East supply tightens",
+                source_category="macro",
+            ),
+            SourceTier.TIER_1_PRIMARY,
+        )
+        relevance = RelevanceFilter({
+            "news": {
+                "filter": {
+                    "min_relevance_score": 0.62,
+                    "max_age_minutes": 10,
+                    "categories": ["commodities", "macro", "central_banks", "geopolitics", "gold"],
+                }
+            }
+        })
+        assert relevance.check(oil).passed
+        assert "commodities" in oil.topic_hints
+
+        short = Position(
+            trade_id="T-SHORT", instrument="XAUUSD", direction="SHORT",
+            entry_price=2000.0, units=1.0, sl=2010.0, tp=1980.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        assert detector.check_against_positions(oil, [short]) == []
+
+        goldman = _make_event(
+            "Goldman Sachs shares rise after the bank reaches a deal",
+            topics=["gold"],
+        )
+        long = Position(
+            trade_id="T-LONG", instrument="XAUUSD", direction="LONG",
+            entry_price=2000.0, units=1.0, sl=1990.0, tp=2020.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        assert detector.check_against_positions(goldman, [long]) == []
+        assert detector.check_against_positions(goldman, [short]) == []
+
+    def test_dollar_rally_contradicts_long_not_short(self):
+        """A rising dollar is bearish gold, so it may flatten a long only."""
+        detector = CounterNewsDetector({"news": {"counter_news": {"exit_threshold": 0.8}}})
+        event = _make_event("Dollar rises as yields climb", topics=["dollar", "macro"])
+        short = Position(
+            trade_id="T-SHORT", instrument="XAUUSD", direction="SHORT",
+            entry_price=2000.0, units=1.0, sl=2010.0, tp=1980.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        long = Position(
+            trade_id="T-LONG", instrument="XAUUSD", direction="LONG",
+            entry_price=2000.0, units=1.0, sl=1990.0, tp=2020.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        assert detector.check_against_positions(event, [short]) == []
+        hit = detector.check_against_positions(event, [long])
+        assert len(hit) == 1
+        assert hit[0]["action"] == "exit"
+
+    def test_geopolitics_and_gold_drop_still_exit(self):
+        detector = CounterNewsDetector({"news": {"counter_news": {"exit_threshold": 0.8}}})
+        short = Position(
+            trade_id="T-SHORT", instrument="XAUUSD", direction="SHORT",
+            entry_price=2000.0, units=1.0, sl=2010.0, tp=1980.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        war = _make_event("War escalation hits energy markets", topics=["geopolitics"])
+        war_hit = detector.check_against_positions(war, [short])
+        assert len(war_hit) == 1
+        assert war_hit[0]["action"] == "exit"
+
+        long = Position(
+            trade_id="T-LONG", instrument="XAUUSD", direction="LONG",
+            entry_price=2000.0, units=1.0, sl=1990.0, tp=2020.0,
+            open_time=datetime.now(timezone.utc),
+        )
+        drop = _make_event("Gold prices fall after the Fed meeting", topics=["gold"])
+        drop_hit = detector.check_against_positions(drop, [long])
+        assert len(drop_hit) == 1
+        assert drop_hit[0]["action"] == "exit"
 
 
 class TestLLMTradeAdvisor:
