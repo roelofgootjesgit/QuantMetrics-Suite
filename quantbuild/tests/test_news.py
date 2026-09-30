@@ -11,6 +11,7 @@ from src.quantbuild.news.gold_classifier import GoldEventClassifier
 from src.quantbuild.news.sentiment import RuleBasedSentiment
 from src.quantbuild.news.advisor import LLMTradeAdvisor
 from src.quantbuild.news.counter_news import CounterNewsDetector
+from src.quantbuild.news.history import NewsHistory
 from src.quantbuild.strategy_modules.news_gate import NewsGate
 from src.quantbuild.models.trade import Position
 
@@ -229,3 +230,66 @@ class TestLLMTradeAdvisor:
         assert result["stance"] == "contra"
         assert not result["allowed"]
         assert result["risk_multiplier"] < 1.0
+
+
+def _stored_event(event_id: str, headline: str, received_at: datetime) -> NormalizedNewsEvent:
+    return NormalizedNewsEvent(
+        event_id=event_id,
+        received_at=received_at,
+        published_at=received_at,
+        source_name="Reuters",
+        source_tier=SourceTier.TIER_1_PRIMARY,
+        source_reliability_score=0.95,
+        headline=headline,
+        topic_hints=["gold"],
+    )
+
+
+class TestNewsHistoryArchive:
+    def test_session_save_keeps_events_already_on_disk(self, tmp_path):
+        """A LiveRunner shutdown must not replace the collected news archive."""
+        archive = NewsHistory(cache_dir=tmp_path)
+        older = datetime(2025, 6, 1, 12, 0, tzinfo=timezone.utc)
+        archive.add_event(
+            _stored_event("hist-1", "Gold rallies on rate cut bets", older),
+            SentimentResult(
+                event_id="hist-1",
+                direction="bullish",
+                confidence=0.8,
+                method="rule_based",
+                impact_on_gold=0.4,
+            ),
+        )
+        archive.add_event(_stored_event("hist-2", "Fed holds rates steady", older))
+        archive.save_to_parquet()
+
+        session = NewsHistory(cache_dir=tmp_path)
+        session.add_event(
+            _stored_event("live-1", "Dollar rises after payrolls", datetime(2026, 9, 30, 11, 0, tzinfo=timezone.utc)),
+        )
+        session.save_to_parquet()
+
+        reloaded = NewsHistory(cache_dir=tmp_path)
+        assert reloaded.load_from_parquet() == 3
+        headlines = {ev.headline for ev in reloaded.events}
+        assert headlines == {
+            "Gold rallies on rate cut bets",
+            "Fed holds rates steady",
+            "Dollar rises after payrolls",
+        }
+        kept = reloaded._sentiments["hist-1"]
+        assert kept.direction == "bullish"
+        assert kept.impact_on_gold == pytest.approx(0.4)
+
+    def test_empty_save_does_not_delete_archive(self, tmp_path):
+        archive = NewsHistory(cache_dir=tmp_path)
+        archive.add_event(
+            _stored_event("hist-1", "Gold steady", datetime(2025, 1, 2, tzinfo=timezone.utc)),
+        )
+        archive.save_to_parquet()
+
+        NewsHistory(cache_dir=tmp_path).save_to_parquet()
+
+        reloaded = NewsHistory(cache_dir=tmp_path)
+        assert reloaded.load_from_parquet() == 1
+        assert reloaded.events[0].event_id == "hist-1"

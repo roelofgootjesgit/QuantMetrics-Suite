@@ -27,10 +27,17 @@ class NewsHistory:
             self._sentiments[event.event_id] = sentiment
 
     def save_to_parquet(self, filename: str = "news_history.parquet") -> Path:
-        """Save all events to Parquet for fast replay in backtests."""
+        """Save events to Parquet for fast replay in backtests.
+
+        LiveRunner keeps only this process's headlines in memory and saves on
+        shutdown. Replacing the file would drop the archive ``collect_news``
+        built and that news-enabled backtests replay. Merge by event id, and
+        leave an unreadable archive in place.
+        """
+        path = self._cache_dir / filename
         if not self._events:
             logger.warning("No events to save")
-            return self._cache_dir / filename
+            return path
 
         records = []
         for ev in self._events:
@@ -51,14 +58,41 @@ class NewsHistory:
                 "sentiment_impact": sentiment.impact_on_gold if sentiment else 0.0,
             })
 
-        df = pd.DataFrame(records)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        df = df.sort_values("timestamp")
+        incoming = pd.DataFrame(records)
+        merged = self._merge_with_existing(path, incoming)
+        if merged is None:
+            logger.error("Refusing to replace unreadable news archive at %s", path)
+            return path
 
-        path = self._cache_dir / filename
-        df.to_parquet(path, compression="snappy", index=False)
-        logger.info("Saved %d news events to %s", len(records), path)
+        merged["timestamp"] = pd.to_datetime(merged["timestamp"], utc=True)
+        merged = merged.sort_values("timestamp")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            merged.to_parquet(tmp, compression="snappy", index=False)
+            tmp.replace(path)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        logger.info("Saved %d news events to %s", len(merged), path)
         return path
+
+    def _merge_with_existing(self, path: Path, incoming: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Union on-disk rows with this session. None means the archive must be left untouched."""
+        if not path.exists():
+            return incoming
+        try:
+            existing = pd.read_parquet(path)
+        except Exception:
+            logger.exception("Failed to read existing news archive %s", path)
+            return None
+        if existing.empty or "event_id" not in existing.columns:
+            return incoming
+        incoming_ids = set(incoming["event_id"].astype(str))
+        kept = existing[~existing["event_id"].astype(str).isin(incoming_ids)]
+        return pd.concat([kept, incoming], ignore_index=True)
 
     def load_from_parquet(self, filename: str = "news_history.parquet") -> int:
         """Load historical events from Parquet."""
