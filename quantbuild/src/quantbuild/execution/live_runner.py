@@ -25,6 +25,7 @@ import pandas as pd
 from src.quantbuild.config import load_config
 from src.quantbuild.data.sessions import session_from_timestamp, ENTRY_SESSIONS
 from src.quantbuild.alerts.telegram import TelegramAlerter
+from src.quantbuild.execution.broker_errors import BrokerQueryError
 from src.quantbuild.execution.broker_factory import create_broker
 from src.quantbuild.execution.quantlog_emitter import QuantLogEmitter
 from src.quantbuild.execution.signal_evaluated_desk_grade import build_desk_grade_payload
@@ -491,7 +492,11 @@ class LiveRunner:
         if self.dry_run or not self.broker.is_connected:
             return
 
-        broker_trades = self.broker.get_open_trades()
+        try:
+            broker_trades = self.broker.get_open_trades()
+        except BrokerQueryError as e:
+            logger.warning("Broker position sync skipped after query failure: %s", e)
+            return
         broker_ids = {t.trade_id for t in broker_trades}
         monitor_ids = {p.trade_id for p in self.position_monitor.all_positions}
 

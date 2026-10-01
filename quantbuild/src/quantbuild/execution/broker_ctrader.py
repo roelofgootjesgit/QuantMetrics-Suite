@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import time
 from typing import Dict, List, Optional
 
+from src.quantbuild.execution.broker_errors import BrokerQueryError
 from src.quantbuild.execution.broker_oanda import AccountInfo, OandaPosition, OrderResult
 from src.quantbuild.suite_layout import canonical_quantbridge_src_path
 
@@ -347,7 +348,12 @@ class CTraderBroker:
                 return False
             close_units = units
             if close_units is None:
-                for p in self._real_bridge.get_open_trades():
+                try:
+                    open_trades = self._real_bridge.get_open_trades()
+                except Exception as e:
+                    logger.warning("Cannot resolve close volume for %s: %s", trade_id, e)
+                    return False
+                for p in open_trades:
                     if str(p.trade_id) == str(trade_id):
                         close_units = float(p.units)
                         break
@@ -376,7 +382,10 @@ class CTraderBroker:
             if not self.is_connected or self._real_bridge is None:
                 return []
             # When instrument is None we explicitly request all open trades.
-            positions = self._real_bridge.get_open_trades(instrument=instrument)
+            try:
+                positions = self._real_bridge.get_open_trades(instrument=instrument)
+            except Exception as e:
+                raise BrokerQueryError(f"cTrader get_open_trades failed: {e}") from e
             out: List[OandaPosition] = []
             for p in positions:
                 out.append(

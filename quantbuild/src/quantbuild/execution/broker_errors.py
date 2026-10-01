@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+class BrokerQueryError(RuntimeError):
+    """Position query failed. Callers must not treat this as an empty book."""
+
+
 @dataclass(frozen=True)
 class BrokerError(Exception):
     code: str

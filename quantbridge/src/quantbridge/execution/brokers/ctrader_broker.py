@@ -149,6 +149,11 @@ class CTraderBroker(BrokerContract):
     def get_open_trades(self, instrument: Optional[str] = None) -> List[Position]:
         broker_symbol = map_symbol("ctrader", instrument or self.instrument)
         trades = self.client.get_open_trades(broker_symbol)
+        # OpenAPI reconcile failures return [] and set last_error. That is not a flat account.
+        err = getattr(self.client, "last_error", None)
+        if err:
+            self._last_error = str(err)
+            raise RuntimeError(f"get_open_trades failed: {err}")
         self._last_success_at = datetime.now(timezone.utc)
         self._last_error = None
         return trades
