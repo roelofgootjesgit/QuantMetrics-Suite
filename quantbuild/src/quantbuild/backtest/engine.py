@@ -421,9 +421,8 @@ def run_backtest(cfg: Dict[str, Any], precomputed_regime: Optional[pd.Series] = 
     data = load_parquet(base_path, symbol, tf, start=start, end=end)
     fixed_calendar_window = bool(sd_raw and ed_raw)
     if data.empty or len(data) < 50:
-        # Fixed start/end backtests need history that spans the window. Auto-fetch via
-        # ``ensure_data`` uses a single Dukascopy call that can return a short slice and
-        # **overwrite** a longer parquet — never shrink cache that way.
+        # Fixed windows are not auto-filled. A provider lookback can be much shorter
+        # than start_date..end_date, so that slice must not stand in for the window.
         if not fixed_calendar_window:
             ensure_data(symbol=symbol, timeframe=tf, base_path=base_path, period_days=fetch_span_days)
             data = load_parquet(base_path, symbol, tf, start=start, end=end)

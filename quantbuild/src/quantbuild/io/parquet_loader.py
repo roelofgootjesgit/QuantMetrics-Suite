@@ -82,14 +82,45 @@ def load_parquet(
     return df
 
 
+def _as_naive_utc_ohlcv(data: pd.DataFrame) -> pd.DataFrame:
+    """Copy OHLCV onto a naive UTC index so cache merges cannot duplicate bars."""
+    out = data.copy()
+    if not isinstance(out.index, pd.DatetimeIndex) and "timestamp" in out.columns:
+        out = out.set_index("timestamp")
+    idx = pd.to_datetime(out.index, utc=True)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    out.index = idx
+    out = out[~out.index.isna()]
+    if out.index.has_duplicates:
+        out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
+
 def save_parquet(base_path: Path, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
+    """Write OHLCV, merging into any bars already stored for this symbol.
+
+    Live refresh fetches only the recent lookback. Replacing the file with that
+    slice deletes older history that backtests read from the same cache.
+    """
+    incoming = _as_naive_utc_ohlcv(data)
     p = path_for(base_path, symbol, timeframe)
     p.parent.mkdir(parents=True, exist_ok=True)
-    if not isinstance(data.index, pd.DatetimeIndex) and "timestamp" in data.columns:
-        data = data.set_index("timestamp")
-    data.index = pd.to_datetime(data.index)
-    data = data.sort_index()
-    data.to_parquet(p, compression="snappy")
+    merged = incoming
+    if p.exists() and not incoming.empty:
+        try:
+            existing = _as_naive_utc_ohlcv(pd.read_parquet(p))
+            merged = pd.concat([existing, incoming])
+            merged = merged[~merged.index.duplicated(keep="last")].sort_index()
+        except Exception as e:
+            logger.warning("parquet merge failed for %s; writing fetched rows only: %s", p, e)
+            merged = incoming
+    elif incoming.empty and p.exists():
+        return
+
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    merged.to_parquet(tmp, compression="snappy")
+    tmp.replace(p)
 
 
 def _get_dukascopy_instrument(symbol: str):
