@@ -26,7 +26,21 @@ def test_quantbuild_can_build_decision_payload() -> None:
 
 
 def test_quantmetrics_os_finds_run_artifacts() -> None:
-    root = Path(__file__).resolve().parents[1]
-    qmos_root = root / "quantmetrics_os"
-    rows = _scan_runs(runs_root=qmos_root / "runs", qmos_root=qmos_root)
-    assert rows, "Expected at least one run artifact folder under quantmetrics_os/runs"
+    # Test scanner behavior with an isolated, deterministic fixture rather than
+    # depending on local, ignored or generated artifacts in the repository.
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as directory:
+        qmos_root = Path(directory)
+        run_dir = qmos_root / "runs" / "exp_test" / "baseline"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_info.json").write_text('{"run_id": "fixture-run-001"}', encoding="utf-8")
+
+        rows = _scan_runs(runs_root=qmos_root / "runs", qmos_root=qmos_root)
+        assert len(rows) == 1
+        assert rows[0].experiment == "exp_test"
+        assert rows[0].role == "baseline"
+        assert rows[0].run_id == "fixture-run-001"
+        assert rows[0].status == "unknown"
+        assert rows[0].delete_allowed is False
+
