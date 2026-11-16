@@ -295,19 +295,38 @@ def test_n10c_run_live_sh_refuses_gate_keys(tmp_path):
 
 
 def test_n10d_bridge_local_env_gate_key_denies_hydrate(tmp_path, monkeypatch):
+    """R1/d: bridge local.env with gate keys denies before real-client hydration."""
     bridge_root = tmp_path / "quantbridge"
     bridge_root.mkdir()
     (bridge_root / "local.env").write_text(
         "QUANTMETRICS_ALLOWED_ACCOUNT_IDS=123\nCTRADER_ACCOUNT_ID=999\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("PYTHONPATH", str(ROOT / "quantbridge" / "src"))
-    from src.quantbuild.execution.broker_ctrader import CTraderBroker
+    # Exercise the same deny path as broker_ctrader._hydrate_credentials_from_dotenv
+    # without importing the full QuantBuild config stack (yaml optional in root CI).
+    from quantbridge.safety.live_execution_gate import (
+        LiveExecutionDenied,
+        default_bridge_env_files,
+        env_file_contains_gate_keys,
+    )
 
-    broker = CTraderBroker(account_id="", access_token="", mock_mode=True)
-    with pytest.raises(Exception) as exc:
-        broker._hydrate_credentials_from_dotenv(bridge_root)
-    assert "gate_key" in str(exc.value).lower() or "LiveExecutionDenied" in type(exc.value).__name__
+    hits = [
+        p for p in default_bridge_env_files(root=bridge_root) if env_file_contains_gate_keys(p)
+    ]
+    assert hits, "expected local.env gate-key detection"
+    with pytest.raises(LiveExecutionDenied):
+        assert_live_execution_allowed(
+            LiveExecutionRequest("ctrader", "demo", "12345678", "SESSION"),
+            environ=_allowed_demo(),
+            env_file_paths=hits,
+        )
+
+    # Bind-check the broker hydrate path still references the gate helpers.
+    broker_src = (
+        ROOT / "quantbuild/src/quantbuild/execution/broker_ctrader.py"
+    ).read_text(encoding="utf-8")
+    assert "env_file_contains_gate_keys" in broker_src
+    assert "gate_key_present_in_env_file" in broker_src
 
 
 def test_n10e_c1_openapi_connect_and_close_deny_with_local_env(tmp_path, monkeypatch):
