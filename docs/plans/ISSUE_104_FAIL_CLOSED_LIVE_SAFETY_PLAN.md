@@ -10,6 +10,8 @@ Companion inventory (static path catalog): `docs/plans/ISSUE_104_LIVE_SAFETY_INV
 
 **PLAN remediation (2026-11-16):** Claude verdict on `7f3ad8b` was `REQUEST CHANGES`. This revision folds owner/tech-lead items **P1–P9** into the design below. See §14 for the checklist mapping.
 
+**PLAN remediation round 2/2 (2026-11-16):** Claude recheck on `27709e4` was `REQUEST CHANGES` (sole blocker **R1**). P2–P9 accepted. This revision expands dotenv/env-file inventory and fail-closed rules (**R1.1–R1.5**). See §15 for the R1 checklist mapping. Docs-only; draft PR; no implementation.
+
 ---
 
 ## 1. Problem statement
@@ -68,10 +70,10 @@ Documentary agent prohibitions are not a technical block (`AGENTS.md`).
 | Bypass scripts | `ctrader_smoke.py` (QB+bridge), `run_order_lifecycle_check.py`, `run_runtime_control.py` (close), `diagnose_ctrader_connect.py` (connect) | High / connect |
 | Launch / orch | `launch_live_safe.py`, `quantmetrics.py build --real`, `run_live.sh` | High |
 | Deploy | `quantbuild-ctrader-demo.service` → always `--real` via launcher; `quantbridge-paper.service` OpenAPI close loop | High (operator) |
-| Config / env | `config.py` `load_dotenv(override=True)` | **Auth bypass risk (P1)** |
+| Config / env | Five env-file sources (a)–(e) in **§4.7** — not only `config.py` | **Auth bypass risk (P1 / R1)** |
 | Safe paths | mock clients, `dry_run=True` order skip, backtest, research, paper_shadow | Keep intact |
 
-**Bypass reality:** gating only `app.py` is insufficient. Smoke and bridge scripts construct brokers directly. Dotenv can override process gate keys unless blocked.
+**Bypass reality:** gating only `app.py` is insufficient. Smoke and bridge scripts construct brokers directly. Multiple env-file loaders (dotenv, shell `source`, systemd `EnvironmentFile` inside a checkout) can inject or override gate keys unless blocked (**R1**).
 
 ---
 
@@ -183,24 +185,53 @@ def canonicalize_ctrader_account_id(account_id: str) -> str:
 - `SESSION` on allowlisted `demo`/`practice` with allowlisted account — connect for data **without** `QUANTMETRICS_EXECUTION_AUTHORIZED=1`, subject to dotenv hygiene and live-host freeze.  
 - `ORDERS` on demo OpenAPI — **still requires** owner flag + account allowlist (demo orders are still real broker API mutations).
 
-### 4.7 Dotenv non-authority and config loader (**P1**)
+### 4.7 Dotenv / env-file non-authority — full inventory (**P1** / **R1**)
 
-**Fact:** `quantbuild/src/quantbuild/config.py` currently does `load_dotenv(override=True)`.
+**Frozen gate keys (P8):** `QUANTMETRICS_EXECUTION_AUTHORIZED`, `QUANTMETRICS_ALLOWED_ACCOUNT_IDS`, `QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS`.
 
-**Policy (PR-A must implement):**
+#### 4.7.1 All env-file sources that can touch process or client construction (**R1.1**)
 
-1. Gate keys (`QUANTMETRICS_EXECUTION_AUTHORIZED`, `QUANTMETRICS_ALLOWED_ACCOUNT_IDS`, `QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS`) must **never** be supplied or overridden by dotenv into the trusted decision path.  
-2. **Presence of any of these three keys inside dotenv-sourced material ⇒ deny** (fail closed), even if process env looks correct — forces operators to use process/systemd env only and surfaces misconfiguration.  
-3. Preferred loader behaviour (implementation detail to choose in PR-A, both must satisfy tests):  
-   - stop using `override=True` for these keys; and/or  
-   - snapshot process env for gate keys **before** `load_dotenv`; restore/ignore dotenv values for those keys; and  
-   - if dotenv file contains any gate key → gate denies.  
-4. **N10 tests (P1):**  
-   - Process key **missing**, dotenv has `QUANTMETRICS_EXECUTION_AUTHORIZED=1` → `ORDERS` **deny**.  
-   - Process key explicitly `0`, dotenv has `1` → **deny**.  
-   - Analogous cases for account/env allowlist keys appearing in dotenv → deny.  
-5. **AGENTS.md (PR-A):** agents must never set these gate keys and never write them into `.env` / dotenv files.  
-6. **Limitation:** process env does not protect against shell access as the same service user.
+| ID | Location | Mechanism today | Inherited / effect |
+|---|---|---|---|
+| **(a)** | `quantbuild/src/quantbuild/config.py` | `load_dotenv(override=True)` | Overwrites process env for the QuantBuild process |
+| **(b)** | `quantmetrics_os/orchestrator/quantmetrics.py` `_bootstrap_env` | `load_dotenv(orchestrator/.env, override=True)` | Process env of orchestrator; **inherited by child** QuantBuild subprocess |
+| **(c)** | `quantbuild/scripts/vps/run_live.sh` | `set -a; source …/orchestrator/.env; set +a` then `exec` Python | Gate keys in that file become **process env before** Python starts |
+| **(d)** | `quantbuild/src/quantbuild/execution/broker_ctrader.py` `_hydrate_credentials_from_dotenv` | `dotenv_values` from bridge `local.env` / `.env` | Today hydrates **CTRADER_*** only; still a file that could contain gate keys |
+| **(e)** | `quantbridge/ops/vps/quantbridge-paper.service` | `EnvironmentFile=/opt/quantbridge/local.env` | Injects into systemd service env; path is **inside** a repo checkout (`/opt/quantbridge`) |
+
+Companion inventory tables: `ISSUE_104_LIVE_SAFETY_INVENTORY.md` § Env-file / dotenv sources.
+
+#### 4.7.2 Exact fail-closed behaviour (**R1.2**)
+
+| ID | Required behaviour (implementation in later PR-A; documented here) |
+|---|---|
+| **(a)** / **(b)** | **Refuse startup** if the dotenv file contains **any** gate key. Never inject or override authorization via dotenv. Gate decisions use trusted process/systemd env only after this check. |
+| **(c)** | **Before** `source`, scan the candidate `.env` file; if any gate key is present → **nonzero exit** and **do not launch** Python. |
+| **(d)** | If bridge `local.env` / `.env` contains any gate key → **deny** before OpenAPI / real client construction (`_init_real_bridge` / equivalent). Credential hydration remains **CTRADER_*** keys only (never gate keys). |
+| **(e)** | Owner authorization for production units must come **only** from an **external, root-owned** file **outside all repo checkouts**, not writable by the service user (canonical example already used by QuantBuild demo unit: `/etc/quantbuild/quantbuild.env`). Existing `quantbridge-paper.service` `EnvironmentFile=/opt/quantbridge/local.env` is a **known non-compliant path** and is a **future migration item**. **No systemd unit edits in this PLAN PR or in PR-A/B unless the owner explicitly asks.** |
+
+Additional policy (unchanged from P1):
+
+1. Gate keys must **never** be supplied or overridden by dotenv into the trusted decision path.  
+2. Preferred loader detail for (a)/(b) (choose in PR-A, tests decide): refuse on gate-key presence; and/or snapshot process gate keys before `load_dotenv` and ignore dotenv values for those keys — presence still denies.  
+3. **AGENTS.md (PR-A):** agents must never set these gate keys and never write them into `.env` / dotenv / `local.env` files.  
+4. **Limitation:** process env does not protect against shell access as the same service user.
+
+#### 4.7.3 PR phase for env-file controls (**R1.3**)
+
+**(a), (b), (c), and (d) must land in PR-A** — even though orchestrator / `run_live.sh` entrypoints otherwise sit with PR-B UX work — so there is **no known bypass window** where wire gates exist but env-file injection can still mint authorization.  
+**(e)** remains documentation + migration only until owner-requested unit change.
+
+#### 4.7.4 Negative CI tests (**R1.4** — keep N10; add N10b–N10d)
+
+| ID | Case | Expect |
+|---|---|---|
+| N10 | Process key missing or `0`; QuantBuild dotenv has `AUTHORIZED=1` / allowlist keys (**P1**) | deny |
+| **N10b** | Orchestrator `.env` contains `QUANTMETRICS_EXECUTION_AUTHORIZED=1` (and/or other gate keys) | deny; subprocess mock **`call_count=0`** |
+| **N10c** | Shell fixture `.env` with any gate key fed to `run_live.sh`-style source path | exit **≠ 0**; stub Python **never invoked** |
+| **N10d** | Bridge `local.env` contains any gate key | deny **before** `_init_real_bridge` / client construction |
+
+All of the above run in **root CI** with the rest of the N/W suite (**P2**).
 
 ---
 
@@ -223,10 +254,14 @@ Ordered by leverage. **PR-A** lands the non-bypassable core; **PR-B** lands entr
 | 10 | `launch_live_safe.py` preflight | before subprocess `--real` | `ORDERS` | **B** |
 | 11 | `quantmetrics.py build --real` | before spawn | `ORDERS` | **B** |
 | 12 | Smoke / lifecycle / runtime_control scripts | before connect/order | matching intent | **B** |
-| — | `config.py` dotenv hygiene | load time | supports all | **A** |
+| — | `config.py` dotenv hygiene **(a)** | load / startup | supports all | **A** (**R1.3**) |
+| — | Orchestrator `_bootstrap_env` **(b)** | startup before child spawn | supports all | **A** (**R1.3**; not deferred to B) |
+| — | `run_live.sh` pre-source gate-key scan **(c)** | before `exec` Python | supports all | **A** (**R1.3**; not deferred to B) |
+| — | `broker_ctrader` bridge `local.env`/`.env` gate-key deny **(d)** | before real client construction | supports all | **A** (**R1.3**) |
 | — | `AGENTS.md` agent bans for gate keys | docs | supports all | **A** |
+| — | `quantbridge-paper.service` EnvironmentFile migration **(e)** | ops only | — | **Out of A/B** until owner asks |
 
-**Invariant:** Even if a caller skips #7–12, #1–3 and #5–6 (and #5b) still deny. That is the non-bypassable core in PR-A.
+**Invariant:** Even if a caller skips #7–12, #1–3 and #5–6 (and #5b) still deny. That is the non-bypassable core in PR-A. **Env-file sources (a)–(d) are also PR-A** so authorization cannot be injected via dotenv/shell while wire gates alone look sufficient (**R1.3**).
 
 **P4 decision for #5b:** prefer invoking the same `SESSION` gate inside `_get_oanda_client`. If a narrowly scoped **practice-only read-only exception** is kept for historical data fetch without account allowlist, it must: (a) hard-deny any environment other than `practice`; (b) never construct a client for `live`; (c) have an explicit unit test; (d) still apply dotenv gate-key hygiene. Default recommendation: **full SESSION gate** for consistency.
 
@@ -234,13 +269,14 @@ Ordered by leverage. **PR-A** lands the non-bypassable core; **PR-B** lands entr
 
 ### Deployment note (no unit edits unless owner asks)
 
-Existing `quantbuild-ctrader-demo.service` will **stop working** until process EnvironmentFile sets (not dotenv):
+Existing `quantbuild-ctrader-demo.service` will **stop working** until its **external** process EnvironmentFile (already `/etc/quantbuild/quantbuild.env` — outside the repo checkout, intended root-owned / service-user-nonwritable) sets:
 
 - `QUANTMETRICS_EXECUTION_AUTHORIZED=1`  
 - `QUANTMETRICS_ALLOWED_ACCOUNT_IDS=<demo-account-id>`  
 - (optional) keep default env allowlist `demo`
 
-Document this in PR-A/B; do not edit the unit unless owner requests.
+**Do not** put these keys in developer `.env`, orchestrator `.env`, bridge `local.env`, or any path inside a git checkout.  
+`quantbridge-paper.service` today uses `EnvironmentFile=/opt/quantbridge/local.env` (**inside** checkout) — **migration required** before that unit may carry gate keys; no unit edits in this PLAN PR. Document in PR-A/B; edit units only on explicit owner request.
 
 ---
 
@@ -268,7 +304,10 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 | N7 | auth `1`, allowlist `111`, account `111`, env `demo` | `ORDERS` allow (policy only) |
 | N8 | Oanda env `live` default allowlist | deny |
 | N9 | Oanda env `practice` + account allowlisted + auth | `ORDERS` allow |
-| N10 | dotenv has auth/`ALLOW*` keys; process missing or `0` (**P1**) | deny |
+| N10 | QuantBuild dotenv has auth/`ALLOW*` keys; process missing or `0` (**P1**) | deny |
+| **N10b** | Orchestrator `.env` has `QUANTMETRICS_EXECUTION_AUTHORIZED=1` (**R1.4**) | deny; child/subprocess mock `call_count=0` |
+| **N10c** | `run_live.sh` / shell fixture `.env` contains any gate key (**R1.4**) | exit ≠ 0; stub Python never invoked |
+| **N10d** | Bridge `local.env` contains any gate key (**R1.4**) | deny before `_init_real_bridge` / client construction |
 | N11 | cTrader account `0123` / `12 3` / `12a` (**P6**) | deny |
 | N12 | gate import failure / missing module (**P3**) | `LiveExecutionDenied` (no ungated success) |
 
@@ -309,11 +348,15 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 | `quantbridge/src/quantbridge/execution/clients/ctrader_openapi_client.py` | **Edit** — gate + fail-closed host map (#1–3) |
 | `quantbuild/src/quantbuild/execution/broker_oanda.py` | **Edit** — SESSION/ORDERS (#5–6) |
 | `quantbuild/src/quantbuild/io/oanda_loader.py` | **Edit** — #5b / **P4** |
-| `quantbuild/src/quantbuild/config.py` | **Edit** — dotenv non-authority (**P1**) |
+| `quantbuild/src/quantbuild/config.py` | **Edit** — dotenv non-authority **(a)** / **P1** / **R1** |
+| `quantmetrics_os/orchestrator/quantmetrics.py` | **Edit** — `_bootstrap_env` refuse gate keys in orchestrator `.env` **(b)** / **R1.3** |
+| `quantbuild/scripts/vps/run_live.sh` | **Edit** — pre-`source` gate-key scan; nonzero exit **(c)** / **R1.3** |
+| `quantbuild/src/quantbuild/execution/broker_ctrader.py` | **Edit** — deny if bridge `local.env`/`.env` has gate keys **(d)** / **R1.3**; keep CTRADER_* hydration only |
 | `AGENTS.md` | **Edit** — never set/write gate keys (**P1**) |
-| `.github/workflows/ci.yml` and/or root `tests/` | **Edit** — run N/W(+partial) gate tests + mutation proof (**P2**) |
+| `.github/workflows/ci.yml` and/or root `tests/` | **Edit** — run N/W(+partial) gate tests + mutation proof (**P2**) + **N10b–N10d** |
 | `quantbridge/tests/test_live_execution_gate.py` | **Add** |
-| `quantbuild/tests/test_live_execution_gate_wire.py` | **Add** (Oanda/loader/import-fail) |
+| `quantbuild/tests/test_live_execution_gate_wire.py` | **Add** (Oanda/loader/import-fail + N10/N10d) |
+| Orchestrator / `run_live.sh` fixture tests | **Add** — N10b / N10c under root CI |
 
 ### PR-B (only after PR-A merged; exact-SHA Claude **code** review)
 
@@ -325,11 +368,11 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 | `quantbuild/src/quantbuild/execution/live_runner.py` | **Edit** — #8 |
 | `quantbuild/src/quantbuild/app.py` | **Edit** — #9 |
 | `quantbuild/scripts/launch_live_safe.py` | **Edit** — #10 |
-| `quantmetrics_os/orchestrator/quantmetrics.py` | **Edit** — #11 |
+| `quantmetrics_os/orchestrator/quantmetrics.py` | **Edit** — #11 **ORDERS preflight / spawn UX only** (gate-key refuse in `_bootstrap_env` already in **PR-A** per **R1.3**) |
 | smoke / lifecycle / runtime_control scripts | **Edit** — #12 |
 | Entrypoint E-tests under root CI | **Add** |
 
-**Out of both PRs unless owner asks:** systemd unit bodies, VPS install scripts, filling real EnvironmentFiles, creating `/etc/quantmetrics/execution_authorization`.
+**Out of both PRs unless owner asks:** systemd unit **bodies**, VPS install scripts, filling real EnvironmentFiles with secrets, creating `/etc/quantmetrics/execution_authorization`, and migrating `quantbridge-paper.service` off `/opt/quantbridge/local.env`.
 
 ---
 
@@ -337,14 +380,15 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Existing demo OpenAPI systemd unit breaks | Service fails until process env set | Document required **process** env vars (not dotenv); optional follow-up unit comments |
-| Dotenv previously “worked” for auth | Deny when keys present in `.env` | Intentional (**P1**); migrate keys to systemd/EnvironmentFile |
+| Existing demo OpenAPI systemd unit breaks | Service fails until process env set | Document required vars in **external** EnvironmentFile only: root-owned, **outside all repo checkouts**, not writable by the service user (e.g. `/etc/quantbuild/quantbuild.env`). **Not** developer dotenv / orchestrator `.env` / bridge `local.env` (**R1.5**) |
+| Dotenv previously “worked” for auth | Deny when keys present in any of (a)–(d) files | Intentional (**P1** / **R1**); migrate keys to compliant external EnvironmentFile |
+| `quantbridge-paper.service` uses in-checkout `EnvironmentFile=/opt/quantbridge/local.env` | Non-compliant auth injection surface | **Explicit migration item (**R1.5** / **(e)**)** — move to external root-owned file; **no unit edits in PLAN/PR-A/B** without owner ask |
 | Operators used typo env that “worked” as LIVE | Suddenly denied | Intentional; clear deny reason |
 | Duplicate policy in QB | Drift | Forbidden (**P3**); single QuantBridge module |
 | `SESSION` allowlist blocks dry-run ctrader data | Data bootstrap fails | List demo account; or use mock/dukascopy |
 | False sense of safety | Same-user shell can export env | Document residual risk; AGENTS bans; future owner-only file for `live` |
 | Emergency flatten denied without auth | Cannot close positions | **§9.1 / P9** operator procedure |
-| PR-B delayed | Entrypoint UX weak until B | Acceptable: wire gates in A still block bypasses |
+| PR-B delayed | Entrypoint UX weak until B | Acceptable: wire gates + env-file controls (a)–(d) in A still block bypasses |
 
 ---
 
@@ -355,7 +399,7 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 1. Unknown/empty cTrader environment cannot select LIVE_HOST (W1 + mutation).  
 2. Missing/false/`true`/` 1` owner auth → no OpenAPI/Oanda order mutation.  
 3. Empty/missing account allowlist → deny; wrong account → deny; bad cTrader ID shapes → deny (**P6**).  
-4. Dotenv cannot authorize; N10 green (**P1**).  
+4. Dotenv / env-file cannot authorize; **N10 + N10b–N10d** green (**P1** / **R1.4**); sources (a)–(d) enforced in PR-A (**R1.3**).  
 5. Gate import failure → deny for Oanda connect / non-mock factory paths tested in A scope (**P3**).  
 6. `oanda_loader` covered (**P4**).  
 7. All N/W tests (+ mutation proof) run in **root CI** and pass (**P2**); zero client ctor on deny.  
@@ -375,12 +419,13 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 
 **Operator procedure (document in PR-A ops note / runbook snippet):**
 
-1. **Authorize:** as the service owner, set process environment (systemd `Environment=` / `EnvironmentFile=` that is **not** a developer dotenv):  
-   `QUANTMETRICS_EXECUTION_AUTHORIZED=1` and `QUANTMETRICS_ALLOWED_ACCOUNT_IDS=<account>`.  
-2. **Execute** the minimum close/flatten path (e.g. runtime_control failsafe) — still subject to wire gates.  
-3. **Remove authorization immediately after:** unset or set `QUANTMETRICS_EXECUTION_AUTHORIZED=0` / remove the key; reload systemd; confirm `systemctl show` / process environ no longer has `=1`.  
+1. **Authorize:** as the service owner, set process environment via systemd `Environment=` or `EnvironmentFile=` that is **external to every repo checkout**, **root-owned**, and **not writable by the service user** (example: `/etc/quantbuild/quantbuild.env`).  
+   Set `QUANTMETRICS_EXECUTION_AUTHORIZED=1` and `QUANTMETRICS_ALLOWED_ACCOUNT_IDS=<account>`.  
+   **Forbidden** for this step: developer `.env`, `quantmetrics_os/orchestrator/.env`, bridge `local.env` / `.env`, or `EnvironmentFile=` paths inside a checkout such as today’s `quantbridge-paper.service` → `/opt/quantbridge/local.env` (**R1.5** / **(e)** migration).  
+2. **Execute** the minimum close/flatten path (e.g. runtime_control failsafe) — still subject to wire gates. **Recommended (non-blocking N-1):** stop the normal entry / live loop first so new entries cannot open while flattening.  
+3. **Remove authorization immediately after:** unset or set `QUANTMETRICS_EXECUTION_AUTHORIZED=0` / remove the key from the **same external** file; reload systemd; confirm `systemctl show` / process environ no longer has `=1`.  
 4. **Audit:** record UTC timestamp, operator identity, account ID, reason, commands run, and confirmation that auth was removed. Store outside git if it contains sensitive host details.  
-5. **Never** leave `=1` in a checked-in `.env`, example env, or agent session.  
+5. **Never** leave `=1` in a checked-in `.env`, example env, orchestrator/bridge env file, in-checkout EnvironmentFile, or agent session.  
 6. Agents must not perform this procedure.
 
 ---
@@ -398,10 +443,10 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 
 ### PR-A
 
-1. Land `live_execution_gate.py` + N1–N12 (incl. P1/P6/P7).  
+1. Land `live_execution_gate.py` + N1–N12 including **N10b–N10d** (P1/P6/P7/**R1.4**).  
 2. Patch `CTraderOpenApiClient` host map + connect/order gates (W1–W3).  
 3. Patch `OandaBroker` + `oanda_loader` (W4–W5, P4).  
-4. Fix `config.py` dotenv hygiene; update `AGENTS.md` (P1).  
+4. Env-file controls **(a)–(d)** in PR-A (**R1.3**): `config.py`, orchestrator `_bootstrap_env`, `run_live.sh` pre-source scan, `broker_ctrader` local.env deny; update `AGENTS.md` (P1).  
 5. Wire root CI + mutation proof (P2).  
 6. Record SHA; Claude code review; owner merge.
 
@@ -415,9 +460,14 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 
 ---
 
-## 12. Review checklist for Claude (PLAN recheck)
+## 12. Review checklist for Claude (PLAN recheck R2)
 
 - [ ] P1 dotenv non-authority + N10 + live-host file freeze adequate?  
+- [ ] **R1.1** all five env-file sources (a)–(e) inventoried in §4.7 / companion inventory?  
+- [ ] **R1.2** exact fail-closed behaviour per source adequate?  
+- [ ] **R1.3** (a)–(d) forced into PR-A (no bypass window) clear?  
+- [ ] **R1.4** N10b–N10d + root CI coverage adequate?  
+- [ ] **R1.5** external root-owned EnvironmentFile rule + `quantbridge-paper.service` migration flag clear in §8 / §9.1?  
 - [ ] P2 root CI + mutation proof + zero client ctor assertions adequate?  
 - [ ] P3 import-fail → deny and no policy duplication adequate?  
 - [ ] P4 `oanda_loader` SESSION vs practice-only exception choice acceptable?  
@@ -428,7 +478,7 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 - [ ] P9 emergency flatten procedure + removal/audit clear?  
 - [ ] Inventory + wire enforcement still sufficient against bypasses?
 
-**PLAN verdict requested:** `APPROVE` / `REQUEST CHANGES` / `BLOCK` tied to this PR head SHA.
+**PLAN verdict requested:** `APPROVE` / `REQUEST CHANGES` / `BLOCK` tied to this PR head SHA (**PLAN RECHECK R2**).
 
 ---
 
@@ -448,7 +498,11 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 **Still owner-follow-up (non-blocking for PLAN approve if defaults accepted):**
 
 1. Exact schema/path permissions for `/etc/quantmetrics/execution_authorization` (or successor).  
-2. Whether #5b uses full SESSION gate (recommended) vs practice-only read-only exception.
+2. Whether #5b uses full SESSION gate (recommended) vs practice-only read-only exception.  
+3. Migrate `quantbridge-paper.service` `EnvironmentFile` from `/opt/quantbridge/local.env` to an external root-owned path (**R1.5** / **(e)**).  
+4. **N-1 (recommended):** stop entry loop during emergency flatten before authorize/close.  
+5. **N-2 (recommended):** split auth-missing vs live-host-freeze negative tests into distinct cases for clearer failure diagnosis.  
+6. **N-3:** companion inventory lists all env-file sources (done in this R2 docs pass).
 
 ---
 
@@ -456,16 +510,30 @@ All tests use **monkeypatch / stubs** — no real DNS, TCP, credentials, or SDK 
 
 | ID | Severity | Requirement (summary) | Plan section(s) |
 |---|---|---|---|
-| **P1** | BLOCKER | Dotenv must not supply/override gate keys; presence in dotenv ⇒ deny; N10; `config.py` in PR-A; AGENTS ban; residual same-user shell risk; no `live` until owner-only file outside repo | §1, §2, §4.2, §4.3, §4.7, §6.1 N10, §7 PR-A, §8, §9, §13 |
+| **P1** | BLOCKER | Dotenv/env-files must not supply/override gate keys; presence ⇒ deny; N10 (+ R1 N10b–d); sources (a)–(d) in PR-A; AGENTS ban; residual same-user shell risk; no `live` until owner-only file outside repo | §1, §2, §4.2, §4.3, §4.7, §6.1 N10–N10d, §7 PR-A, §8, §9, §13, §15 |
 | **P2** | BLOCKER | All N/W/E gate tests in root CI; mutation proof (connect/place/close/modify/host map/Oanda); restoring ternary fails W1; zero `Client`/`oandapyV20.API` ctor; optional AST | §6.0, §6.2, §7 PR-A, §9 PR-A |
 | **P3** | BLOCKER | Gate import failure ⇒ `LiveExecutionDenied`; tests on `OandaBroker.connect` + `create_broker(non-mock)`; `validate_suite_layout` mandatory for non-mock; canonical QuantBridge import only | §4.5, §5 #7, §6.1 N12, §6.3 E8–E9, §7 |
 | **P4** | — | `oanda_loader._get_oanda_client` (#5b): SESSION gate or strict practice-only exception + test | §3, §5 #5b, §6.2 W5, §7 PR-A, §13 |
-| **P5** | — | Split PR-A (gate, N/W, wire #1–3, Oanda #5–6, loader, dotenv, CI, AGENTS) vs PR-B (#4, #7–12 + E-tests) after A merged; each exact-SHA Claude code review | §2, §5, §7, §9, §11 |
+| **P5** | — | Split PR-A (gate, N/W, wire #1–3, Oanda #5–6, loader, env-file (a)–(d), CI, AGENTS) vs PR-B (#4, #7–12 UX + E-tests) after A merged; each exact-SHA Claude code review | §2, §5, §7, §9, §11 |
 | **P6** | — | cTrader account ID strictly numeric; reject whitespace / leading zero / non-numeric | §4.4, §6.1 N11, §9 |
 | **P7** | — | Decide auth ` 1`; **exact `1` only** | §4.3, §6.1 N4, §13 |
 | **P8** | — | Freeze env key names as the three `QUANTMETRICS_*` keys | §4.3, §13 |
-| **P9** | — | Emergency flatten operator procedure; removal; audit | §9.1, §8, §13 |
+| **P9** | — | Emergency flatten operator procedure; removal; audit; external EnvironmentFile only | §9.1, §8, §13 |
 
 ---
 
-**End of PLAN.** Implementation must not start until independent Claude PLAN recheck approves this design on the exact commit SHA of this plan PR.
+## 15. R1 remediation checklist (round 2/2 — docs mapping)
+
+| ID | Severity | Requirement (summary) | Plan section(s) |
+|---|---|---|---|
+| **R1.1** | BLOCKER | Inventory all env-file sources (a)–(e): `config.py` load_dotenv; orchestrator `_bootstrap_env`; `run_live.sh` source; `broker_ctrader` dotenv_values; `quantbridge-paper.service` EnvironmentFile | §3, §4.7.1, companion inventory |
+| **R1.2** | BLOCKER | Exact fail-closed: (a)/(b) refuse startup on any gate key; (c) pre-source nonzero exit / no Python; (d) deny before client construction; (e) auth only via external root-owned file outside checkouts; no unit edits here | §4.7.2, §5, §8, §9.1 |
+| **R1.3** | BLOCKER | (a)–(d) must be in **PR-A** despite orchestrator/`run_live` otherwise being PR-B; no known bypass window | §4.7.3, §5, §7 PR-A, §11 |
+| **R1.4** | BLOCKER | N10b / N10c / N10d negative CI tests; keep N10; root CI coverage | §4.7.4, §6.1, §7, §9 PR-A |
+| **R1.5** | BLOCKER | Replace vague “not a developer dotenv” with external-to-repo, root-owned, service-user-nonwritable rule; flag `quantbridge-paper.service` path as migration | §8, §9.1, §13 |
+
+**Recommended non-blocking:** N-1 stop entry loop during emergency flatten; N-2 split auth-missing vs live-freeze negatives; N-3 inventory completeness for (a)–(e) (addressed in companion doc).
+
+---
+
+**End of PLAN.** Implementation must not start until independent Claude **PLAN RECHECK R2** approves this design on the exact commit SHA of this plan PR.

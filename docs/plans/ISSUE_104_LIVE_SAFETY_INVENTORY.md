@@ -5,7 +5,8 @@
 **Scope:** Fail-closed live safety design — catalog every code path that can open a real broker session or place/close/modify real orders.  
 **Method:** Static code search across `quantbuild`, `quantbridge`, `quantmetrics_os`, scripts, deploy, systemd, CLI. **No broker connection, no credential reads, no smoke/live runs.**  
 **Repo root inspected:** `/agent/repos/QuantMetrics-Suite`  
-**Related:** GitHub issue #104; `docs/PROP_ROADMAP.md` H1; owner comment requiring PLAN + independent Claude PLAN review before implementation.
+**Related:** GitHub issue #104; `docs/PROP_ROADMAP.md` H1; owner comment requiring PLAN + independent Claude PLAN review before implementation.  
+**R2 note (2026-11-16):** Env-file / dotenv sources (a)–(e) expanded below to match PLAN §4.7 (**R1.1** / recommended **N-3**).
 
 ---
 
@@ -17,6 +18,7 @@ There is **no central fail-closed live gate** today. Real execution is gated onl
 2. cTrader OpenAPI host selection is **fail-open toward LIVE**: any `environment != "demo"` (case-insensitive) selects `EndPoints.PROTOBUF_LIVE_HOST`.
 3. Multiple scripts construct brokers **outside** `app.py` and call `submit_market_order` / `close_trade` directly.
 4. Systemd units and VPS wrappers can start `live --real` unattended once credentials exist in `EnvironmentFile`.
+5. **Five env-file surfaces** can inject process or construction-time values (see § Env-file / dotenv sources) — including dotenv `override=True`, shell `source`, and an in-checkout systemd `EnvironmentFile`.
 
 Documentary prohibitions are **not** a technical block.
 
@@ -123,8 +125,8 @@ Order path (real): `_evaluate_and_execute` → `quantbridge.execute(ExecutionReq
 | Entry point | Module | Can place orders? | Host selection | Current guards | Risk notes |
 |---|---|---|---|---|---|
 | `quantbuild-ctrader-demo.service` | `quantbuild/deploy/systemd/quantbuild-ctrader-demo.service` | **Yes** | Config `configs/ctrader_quantbridge_openapi.yaml` (`environment: demo`, `mock_mode: false`) | launch_live_safe preflight; `--skip-recovery` | **Always `--real` via launcher.** Name says demo; host still follows YAML env string. |
-| `quantbuild.env.example` | `deploy/systemd/quantbuild.env.example` | N/A (creds) | N/A | Empty placeholders | Installed to `/etc/quantbuild/quantbuild.env`. |
-| `quantbridge-paper.service` | `quantbridge/ops/vps/quantbridge-paper.service` | Close/modify | `ctrader_icmarkets_demo.yaml` + `--mode openapi` | Runtime pause/failsafe | OpenAPI reconcile/close loop. |
+| `quantbuild.env.example` | `deploy/systemd/quantbuild.env.example` | N/A (creds) | N/A | Empty placeholders | Installed to `/etc/quantbuild/quantbuild.env` (external path; compliant shape for future gate keys). |
+| `quantbridge-paper.service` | `quantbridge/ops/vps/quantbridge-paper.service` | Close/modify | `ctrader_icmarkets_demo.yaml` + `--mode openapi` | Runtime pause/failsafe | OpenAPI reconcile/close loop. **`EnvironmentFile=/opt/quantbridge/local.env` is inside checkout — R1.1 (e) migration item.** |
 | `quantbuild/.env.example`, `quantbridge/.env.example`, `quantmetrics_os/orchestrator/.env.example`, `config.vps.example.env` | env templates | N/A | Documents `QUANTBUILD_CONFIG`, CTRADER_*, OANDA_* | Examples only | Orchestrator example comments `build --real`. |
 | Docker / compose | — | **None found** | — | — | No Dockerfile / compose in tree. |
 
@@ -177,11 +179,31 @@ Order path (real): `_evaluate_and_execute` → `quantbridge.execute(ExecutionReq
 | Env `QUANTBRIDGE_SRC_PATH` | Where QuantBuild loads bridge package |
 | Bridge `local.env` / `.env` | Hydrated by QuantBuild `CTraderBroker` and many bridge scripts |
 | Orchestrator `.env` | Sourced by `quantmetrics.py` and `run_live.sh` |
-| systemd `EnvironmentFile` | Production injection |
+| systemd `EnvironmentFile` | Production injection (paths differ — see env-file table) |
 | CLI `--account-id` / token overrides | `quantbridge/scripts/ctrader_smoke.py` only |
 | `configs/accounts_baseline.yaml` + `QB_ACCOUNT_<ID>_*` | Multi-account policy / validate_account_env — **not wired into LiveRunner single-account path** |
 
-**Not present:** environment allowlist, account allowlist, owner authorization flag, `LIVE_AUTHORIZED=1`-style kill switch enforced in code.
+**Not present today:** environment allowlist, account allowlist, owner authorization flag, enforced kill switch.  
+**Frozen future gate key names (PLAN P8):** `QUANTMETRICS_EXECUTION_AUTHORIZED`, `QUANTMETRICS_ALLOWED_ACCOUNT_IDS`, `QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS`.
+
+---
+
+## Env-file / dotenv sources (R1.1 / N-3)
+
+Complete catalog of files/loaders that can put values into process env or into broker construction. Gate keys must never be trusted from these surfaces (PLAN §4.7).
+
+| ID | Path / module | Mechanism | What it affects today | Gate-key risk | PLAN fail-closed target |
+|---|---|---|---|---|---|
+| **(a)** | `quantbuild/src/quantbuild/config.py` | `load_dotenv(override=True)` at import | Overwrites QuantBuild process `os.environ` | **High** — can override process gate keys | Refuse startup if file contains any gate key; never authorize via dotenv |
+| **(b)** | `quantmetrics_os/orchestrator/quantmetrics.py` `_bootstrap_env` | `load_dotenv(orchestrator/.env, override=True)` | Orchestrator process env; **inherited by child** QuantBuild | **High** — child inherits injected auth | Same refuse-on-presence; no auth via dotenv |
+| **(c)** | `quantbuild/scripts/vps/run_live.sh` | `set -a; source …/orchestrator/.env; set +a` then `exec` Python | Entire process env **before** Python starts | **High** — shell source is not dotenv API but same injection | Scan file **before** `source`; gate key ⇒ nonzero exit; Python not launched |
+| **(d)** | `quantbuild/src/quantbuild/execution/broker_ctrader.py` `_hydrate_credentials_from_dotenv` | `dotenv_values` on bridge `local.env` then `.env` | Merges into credential fields; **currently CTRADER_*** only | **Medium** — file may still contain gate keys; must not become auth channel | Gate key present ⇒ deny **before** `_init_real_bridge` / client construction; hydration stays CTRADER_* only |
+| **(e)** | `quantbridge/ops/vps/quantbridge-paper.service` | `EnvironmentFile=/opt/quantbridge/local.env` | systemd service env for OpenAPI runtime_control | **High** — path is **inside** repo checkout `/opt/quantbridge` | Owner auth **only** via external root-owned file outside **all** checkouts, not writable by service user (e.g. `/etc/quantbuild/quantbuild.env`). Existing unit path = **migration item**; **no unit edits** in PLAN/PR-A/B without owner ask |
+
+**Contrast (compliant pattern already used by QuantBuild demo unit):**  
+`quantbuild/deploy/systemd/quantbuild-ctrader-demo.service` → `EnvironmentFile=/etc/quantbuild/quantbuild.env` (outside checkout). That is the shape owner authorization must use — not developer dotenv and not in-repo `local.env`.
+
+**Related but not separate loaders:** `diagnose_ctrader_connect.py` docs suggest manually `source` orchestrator `.env` (same class as **(c)**); bridge scripts that read `local.env` for CTRADER_* (same class as **(d)** files).
 
 ---
 
@@ -286,4 +308,5 @@ Before PROP-02 / agent execution:
 - **No Docker** runtime paths found.  
 - Root/module CI does not exercise live brokers.  
 - Audit-pack `live_runner.py` under `docs/` is archival, not an entrypoint.  
+- Env-file sources **(a)–(e)** listed above for PLAN R2 (**R1.1** / **N-3**).  
 - This file is PLAN evidence for issue #104; implementation belongs on a separate reviewed PR.
