@@ -23,10 +23,37 @@ _ORCH_CANDIDATES=(
   "/root/dev/quant/quantmetrics_os/orchestrator/.env"
 )
 
+# Issue #104: refuse env files that mint live-gate keys (N10c). Auth must be
+# process/systemd-only, never developer/orchestrator dotenv inside a checkout.
+_gate_keys=(
+  QUANTMETRICS_EXECUTION_AUTHORIZED
+  QUANTMETRICS_ALLOWED_ACCOUNT_IDS
+  QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS
+)
+_refuse_env_with_gate_keys() {
+  local _file="$1"
+  local _key
+  local _line
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    _line="${_line#"${_line%%[![:space:]]*}"}"
+    [[ -z "$_line" || "$_line" == \#* ]] && continue
+    for _key in "${_gate_keys[@]}"; do
+      if [[ "$_line" == "$_key="* || "$_line" == "$_key ="* ]]; then
+        echo "run_live: refuse env file with gate key ${_key}: ${_file}" >&2
+        return 1
+      fi
+    done
+  done < "$_file"
+  return 0
+}
+
 _sourced=""
 for _c in "${_ORCH_CANDIDATES[@]}"; do
   [[ -z "$_c" ]] && continue
   if [[ -f "$_c" ]]; then
+    if ! _refuse_env_with_gate_keys "$_c"; then
+      exit 2
+    fi
     set -a
     # shellcheck source=/dev/null
     source "$_c"

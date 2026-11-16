@@ -35,7 +35,29 @@ GRANULARITY_MAP = {
 MAX_CANDLES_PER_REQUEST = 5000
 
 
-def _get_oanda_client(token: Optional[str] = None, environment: str = "practice"):
+def _get_oanda_client(
+    token: Optional[str] = None,
+    environment: str = "practice",
+    account_id: Optional[str] = None,
+):
+    """Build Oanda API client after SESSION gate (issue #104 / P4)."""
+    try:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+    except ImportError as exc:
+        raise RuntimeError(f"LiveExecutionDenied: gate_import_failed: {exc}") from exc
+
+    acct = account_id if account_id is not None else os.getenv("OANDA_ACCOUNT_ID", "")
+    assert_live_execution_allowed(
+        LiveExecutionRequest(
+            provider="oanda",
+            environment=str(environment),
+            account_id=str(acct),
+            intent="SESSION",
+        )
+    )
     try:
         import oandapyV20
         tok = token or os.getenv("OANDA_TOKEN", "")

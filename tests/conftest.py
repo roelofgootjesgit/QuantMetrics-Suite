@@ -6,7 +6,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-for rel in ("quantbuild", "quantbuild/src", "quantlog/src", "quantanalytics/src"):
+for rel in (
+    "quantbuild",
+    "quantbuild/src",
+    "quantlog/src",
+    "quantanalytics/src",
+    "quantbridge/src",
+):
     candidate = ROOT / rel
     if candidate.is_dir():
         sys.path.insert(0, str(candidate))

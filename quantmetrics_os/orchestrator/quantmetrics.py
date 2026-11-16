@@ -39,14 +39,40 @@ sys.exit(3)
 
 
 def _bootstrap_env() -> None:
+    env_path = _ORCHESTRATOR_DIR / ".env"
+    if not env_path.is_file():
+        return
+    # Refuse gate keys in orchestrator .env (issue #104 R1 / N10b) — auth is process/systemd only.
+    # Run this check before optional python-dotenv import so missing dotenv cannot bypass.
+    gate_keys = (
+        "QUANTMETRICS_EXECUTION_AUTHORIZED",
+        "QUANTMETRICS_ALLOWED_ACCOUNT_IDS",
+        "QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS",
+    )
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"orchestrator env unreadable: {env_path}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    for key in gate_keys:
+        # Match KEY= assignments (ignore comments).
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or not stripped:
+                continue
+            if stripped.split("=", 1)[0].strip() == key:
+                print(
+                    f"Refuse startup: gate key {key} present in {env_path}. "
+                    "Use external process/systemd EnvironmentFile only.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
     try:
         from dotenv import load_dotenv
     except ImportError:
         return
-    env_path = _ORCHESTRATOR_DIR / ".env"
-    if env_path.is_file():
-        # Orchestrator .env is the intended VPS source of truth when using QuantOS (repo folder quantmetrics_os).
-        load_dotenv(env_path, override=True)
+    # Orchestrator .env is the intended VPS source of truth when using QuantOS (repo folder quantmetrics_os).
+    load_dotenv(env_path, override=True)
 
 
 def _require_dir(var: str) -> Path:

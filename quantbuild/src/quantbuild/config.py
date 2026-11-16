@@ -1,12 +1,44 @@
 """Configuration loader: YAML + env overrides + deep merge."""
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
 import yaml
-from dotenv import load_dotenv
 
-load_dotenv(override=True)
+
+def _ensure_quantbridge_on_path() -> None:
+    """Suite layout: sibling ``quantbridge/src`` must be importable for the gate."""
+    root = Path(__file__).resolve().parents[2]  # quantbuild repo root
+    bridge_src = (root.parent / "quantbridge" / "src").resolve()
+    if bridge_src.is_dir() and str(bridge_src) not in sys.path:
+        sys.path.insert(0, str(bridge_src))
+
+
+def _bootstrap_dotenv() -> None:
+    """Load dotenv only after refusing gate keys in the exact find_dotenv path (C2/P1)."""
+    from dotenv import find_dotenv, load_dotenv
+
+    _ensure_quantbridge_on_path()
+    dotenv_path = find_dotenv(usecwd=True)
+    if not dotenv_path:
+        return
+    try:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionDenied,
+            assert_dotenv_path_has_no_gate_keys,
+        )
+    except ImportError as exc:
+        raise RuntimeError(f"LiveExecutionDenied: gate_import_failed: {exc}") from exc
+
+    try:
+        assert_dotenv_path_has_no_gate_keys(dotenv_path)
+    except LiveExecutionDenied:
+        raise
+    load_dotenv(dotenv_path, override=True)
+
+
+_bootstrap_dotenv()
 
 
 def quantbuild_repo_root() -> Path:
