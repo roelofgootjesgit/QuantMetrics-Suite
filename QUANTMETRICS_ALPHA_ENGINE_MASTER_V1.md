@@ -80,5 +80,14 @@ Dit masterplan definieert de nieuwe QAE-richting. `AGENTS.md` en `.cursor/rules/
 Regelrecords bevatten `provider`, `product`, `account_type`, `source_url`, `retrieved_at`, `effective_at` (indien bekend), `timezone`, `rule_version` en bewijsstatus. Leg per product equity versus balance, resetmoment, static/trailing max loss, minimum handelsdagen, nieuws/weekend/EA-beperkingen en payoutvoorwaarden vast.
 Meet per fase `P(pass)`, `P(breach_daily)`, `P(breach_total)`, tijd-tot-target, kans op ruïne over N pogingen en payoutverdeling. Netto-economie: ontvangen payouts na toepasselijke split minus challengefees, resets en overige kosten; expliciet per scenario en zonder winstclaim. Regels uit niet-officiële bronnen zijn alleen onderzoeksaanwijzingen.
 
-## 13. Execution safety en governance-status
+## 13. Aanvullende verplichte onderzoeks- en veiligheidsregels
+- **Geen martingale, onbeperkt middelen of verlies najagen als vervanging voor edge.** Bestaande risico-opschaling (zoals de ATTACK-fase) is geen bewijs van alpha en moet afzonderlijk op risico en limietbreuk worden beoordeeld.
+- **SIE blijft ON_HOLD:** geen nieuwe satellietfeatures of satellietsprints zonder expliciet goedgekeurd issue `SIE-REACTIVATE`; geen nieuwe betaalde satellietdata zonder afzonderlijke toestemming.
+- **Onderzoeksverdict:** `GO_RESEARCH`, `REVISE`, `REJECT` of `BLOCKED`, met bewijs; nooit automatisch een betaalde challenge starten. Dit is anders dan het code-reviewverdict.
+- **Uitvoerbare marktprijzen:** OHLC-midprice is geen gegarandeerde fill. Gebruik waar mogelijk historische bid/ask- of tickdata en documenteer verschillen tussen externe brokerdata en FTMO-uitvoering.
+- **Intrabar ambiguïteit:** wanneer bar-data de volgorde van stop, target of intraday drawdown-breuk niet bepalen, gebruik een conservatieve regel of markeer de uitkomst onzeker; claim geen exacte fills.
+- **Eenvoudige baselines eerst:** vergelijk ook met een nulstrategie; geen machine learning vóór een gevalideerde eenvoudige baseline.
+- **PROP-01:** verifieer DST bij dagelijkse accountreset en test fail/pass als expliciete toestandsmachine met grensgevallen.
+
+## 14. Execution safety en governance-status
 Bestaande livepaden zijn aanwezig; **documentaire verboden zijn geen technische blokkade**. Een afzonderlijke PR moet fail-closed live-hostselectie, eigenaarsautorisatie en account-allowlist testen vóór agentgestuurde execution. GitHub branch protection, verplichte reviews en volledige module-CI zijn **NOG NIET INGERICHT**. PROP-00 documenteert de kloof; de daadwerkelijke beveiliging vereist afzonderlijke uitvoering en verificatie.
