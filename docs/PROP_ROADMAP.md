@@ -51,7 +51,7 @@ PR #101 requires Claude re-review tied to the post-sync head SHA. Original full 
 - Canonical backtester ADR-001: #108
 - PROP-01: #109; PROP-02: #110; PROP-03: #111; PROP-04: #112; PROP-05: #113
 - Lifecycle strict boolean safety: #103
-- **Owner decision pending:** original master mandates Claude plan review for every task; current AGENTS.md gates external design review to high-impact. No unilateral approval of this deviation.
+- **Owner decision recorded (2026-11-16):** Claude external plan review mandatory for high-impact changes only (AGENTS.md definition); explicit owner-approved deviation from source §6. See PR #101 discussion and `docs/PROP_MASTER_SOURCE_COVERAGE.md`.
 - README, PROJECT_STATUS.md and EXPERIMENT_LOG.md updates remain follow-up scope; original source retains these requests.
 
 ## Next execution task
