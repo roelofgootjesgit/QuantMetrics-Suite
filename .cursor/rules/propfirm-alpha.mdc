@@ -1,0 +1,16 @@
+---
+description: Quantmetrics Alpha Engine research and safe development workflow
+alwaysApply: true
+---
+# Cursor — PropFirm Alpha
+Read `AGENTS.md` and `QUANTMETRICS_ALPHA_ENGINE_MASTER_V1.md`. Preserve `quantbuild/docs/CURSOR_CONTEXT_RULES.md` for efficient module-first context.
+
+- Primary focus: evidence-first intraday alpha and propfirm suitability, FTMO first. SIE remains ON_HOLD, not deleted.
+- Start every task in **Inspect** mode; state relevant files, excluded files, assumptions and risks. Plan → external design review → implement only after approval.
+- Use a feature branch and a small PR. Never merge or change main without owner approval.
+- Separate strategy research from execution. No broker orders, paid challenges, credentials, live trading or unapproved paid data.
+- Check existing interfaces, tests and CI before claiming capabilities. Preserve quantbuild/quantbridge/quantlog/quantanalytics/quantresearch/quantmetrics_os boundaries.
+- No invented backtests or fills. Require chronological out-of-sample tests, costs, timestamps, run IDs, baseline comparisons and a failure ledger.
+- Provider rules must be versioned and verified from official terms before implementation.
+- Report exact tests run and evidence; a passing root CI is not complete validation. Never bypass security or tests.
+- Claude review is a separate step and cannot be claimed unless completed.
