@@ -1,30 +1,19 @@
 # AGENTS.md — Quantmetrics Alpha Engine
-> Repo-wide agent instructions. Read `QUANTMETRICS_ALPHA_ENGINE_MASTER_V1.md` and the relevant module README before work.
 
-## Mission
-Evidence-first algorithmic strategy research. FTMO is the initial propfirm rules reference, not a promise of profitability. Satellite Intelligence Engine is on hold; preserve its work and point-in-time gates.
+## Scope and authority
+Safety constraints override project plans; then the QAE master; then this workflow; then relevant module context rules. If instructions conflict, stop and report. Architecture descriptions are not proof of implementation: quantbuild also has broker/live execution code despite the intended quantbridge boundary. No new backtest engine until ADR-001.
 
-## Required workflow
-1. State task ID, hypothesis/problem, source-of-truth files, scope, exclusions and acceptance tests.
-2. Work on a task-specific branch. Never directly change `main`; never merge without owner approval.
-3. Plan first. Have design reviewed before implementing high-impact changes; distinguish a requested Claude review from an actually completed review.
-4. Make the smallest reviewable patch; keep module boundaries intact.
-5. Run relevant tests and report exact commands, outputs, failures and CI status. Do not claim tests were run without logs.
-6. Produce PR with evidence, risks, datasets/config hashes, and independent review status.
+## Canonical workflow
+IDEA → (RESEARCH PRE-REGISTRATION when empirical) → SPEC → PLAN → (EXTERNAL DESIGN REVIEW if high-impact) → TASK BRANCH → IMPLEMENT → RELEVANT TESTS → INDEPENDENT REVIEW (high-impact) → OWNER MERGE APPROVAL → MERGE → REPORT.
+Each task states objective, why, sources, affected files, exclusions, acceptance criteria, tests and deliverables. Use a task branch and draft PR. Review verdict must be APPROVE / REQUEST CHANGES / BLOCK tied to the **exact head commit SHA**, with evidence in PR discussion (even if reviewed externally). Any code change after review requires reassessment of the changed SHA. At most **two repair rounds per issue**; then STOP & REDESIGN with owner decision. Never claim an external review or CI pass without proof. Never merge or push to main without owner authorization.
 
-## Quant boundaries
-- `quantbuild`: signal and risk decisions; `quantbridge`: orders/execution; `quantlog`: append-only event log; `quantanalytics`: read-only diagnostics; `quantresearch`: controlled experiments; `quantmetrics_os`: orchestration.
-- Audit actual implementations before reusing or extending them. Do not invent APIs.
-- One primary P&L/backtest engine; architecture decision before introducing another.
-- Pre-register strategies; use chronological splits, realistic spreads/slippage/fees, no look-ahead, leakage or survivorship bias; record failed hypotheses.
-- Propfirm rules are provider/product/date-specific. Include equity/open P&L, drawdown reset/timezones, challenge fees, resets and payout restrictions; never silently generalize rules.
-- Challenge success is not proven long-run profitability.
+**High-impact** means execution/broker, account risk, propfirm rule semantics, data ingestion/PIT, CI/security, cross-module architecture (>3 modules), or any operation that can spend money or modify real accounts. Routine docs/tests can use the smaller workflow without mandatory pre-code external review; all merges still require owner approval. Use only 1–3 directly relevant context files initially, expanding with a stated reason; don't indiscriminately load the master on every task.
 
-## Safety and approvals
-No live trading, paid challenge, new paid data, secrets, broker credentials, autonomous orders, destructive changes, or major architectural changes without explicit owner approval. No disabling CI/security controls. Do not trigger Cursor automatically unless a supported integration has been verified.
+## Research and modules
+Preserve quantbuild, quantbridge, quantlog, quantanalytics, quantresearch and quantmetrics_os boundaries while auditing real implementation. Use existing quantresearch registration where applicable. Timestamp provenance, chronological validation, cost realism, baseline, multiple-testing and negative-result logging are mandatory for empirical claims. All FTMO conditions require official provider/product/date evidence. Treat legacy performance claims as UNVERIFIED_LEGACY.
 
-## Context efficiency
-Follow existing `quantbuild/docs/CURSOR_CONTEXT_RULES.md`: inspect only relevant files, module-first, plan before patch; widen context only when evidence demands it.
+## Hard safety prohibitions
+**Never run** `live --real`, `quantbuild/scripts/launch_live_safe.py`, `ctrader_smoke.py`, or any real broker order/smoke operation in an agent session. Agent environments **must not contain broker credentials** (including CTRADER_ACCESS_TOKEN, CTRADER_ACCOUNT_ID, CTRADER_CLIENT_ID). Do not read, copy or print secrets. Do not purchase data/challenges, disable tests, alter live deployment or launch unattended orders. Technical live gating is **not yet implemented**; this prohibition is procedural, not a claim of enforced safety. Branch protection is **not configured**; never treat the text as an enforced GitHub rule.
 
-## PROP-00
-Documentation-only transition. No strategy, broker, CI or execution behavior changes. Report unverified areas and request separate implementation PRs.
+## Completion report
+Record exact SHA, changed files, real test commands and results, CI URL, reviewer/verdict/SHA, outstanding risks, status and next action. Definition of done: acceptance criteria met, relevant tests run, review gate met, owner merge approval obtained; otherwise mark blocked/in review. No SIE deletion; SIE is proposed ON_HOLD, with status in its own repo still pending update.
