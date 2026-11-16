@@ -5,3 +5,5 @@ alwaysApply: true
 # QAE guardrails
 Follow the canonical workflow and safety rules in `AGENTS.md`; consult the master only for relevant strategic/research decisions. Start with 1–3 relevant files, respecting existing module context-efficiency rules. External design review is required for high-impact work as defined in AGENTS.md, not every edit.
 Never execute `live --real`, `launch_live_safe.py`, `ctrader_smoke.py`, real orders, or broker-credential operations. No merge/main push without explicit owner approval. Branch protection and technical live gate are not yet configured. Report exact test/CI and SHA-bound review evidence; never fabricate results.
+
+No martingale, unlimited averaging down, or chasing losses as a substitute for edge. SIE is ON_HOLD: no satellite feature work without approved `SIE-REACTIVATE`; no paid satellite data without separate consent.
