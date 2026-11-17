@@ -500,6 +500,37 @@ validatie van de echte experimentrecords: NOT RUN in CI (artefacten niet in repo
 - `requirements-dev.txt` pins `pytest>=9.0.3`.
 - CI workflow still: `pip install -r requirements.txt -r requirements-dev.txt`.
 
+### Stop (Impl-A initial)
+
+~~READY FOR CLAUDE CODE REVIEW IMPL-A #119~~ — Claude REQUEST CHANGES on `a91b7d0`; B1 repair round 1/2 authorized (comment `6959310329`).
+
+---
+
+## 13. Impl-A B1 repair evidence (X1–X4) — DIFF RECHECK
+
+**Scope lock:** only `tests/test_ci_workflow_preservation.py` + this evidence. No workflow / QuantLog / deps / QuantResearch changes.
+
+| ID | Guard | Mutant | Expect |
+|---|---|---|---|
+| **X1** | mandatory step `shell:` (existing M09 contract) | step `shell: bash {0}` on `pytest tests -q` | KILLED |
+| **X2** | `defaults.run.shell` at workflow **and** job | `defaults.run.shell: bash -c 'exit 0' {0}` | KILLED |
+| **X3** | ban `PYTEST_ADDOPTS` / `PYTEST_PLUGINS` / `PYTHONPATH` in workflow/job/mandatory-step `env` | workflow `env.PYTEST_ADDOPTS=--collect-only` | KILLED |
+| **X4** | require `push` + `pull_request` (YAML `on`→`True`); reject restrictive filters | `on: workflow_dispatch` only; `pull_request.paths` | KILLED |
+
+**Residual risks (documented):** changed `uses:` actions not yet allowlisted; branch protection #105 owner-parked; N1 sibling-path unit assumes monorepo (may skip/fail standalone quantbuild clone — out of this repair scope).
+
+### Commands / results (repair round 1)
+
+| Command | Result |
+|---|---|
+| `pytest tests/test_ci_workflow_preservation.py -v` | **24 passed** (M01–M09 + X1–X4 all KILLED) |
+| `pytest tests -q` | **173 passed** |
+| `pytest quantbuild/tests -q --disable-socket --allow-unix-socket` | **250 passed, 0 skipped** |
+| #104 N/W/mutation | **64 passed** |
+| #104 E/mutation | **43 passed** |
+| `python run_demo.py` | Verdict `VALIDATION_REQUIRED` |
+| Workflow / QuantLog / deps / QuantResearch | **unchanged** this round |
+
 ### Stop
 
-**READY FOR CLAUDE CODE REVIEW IMPL-A #119**
+**READY FOR CLAUDE B1 DIFF RECHECK IMPL-A #119**

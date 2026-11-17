@@ -4,6 +4,8 @@ A1: reject job/step continue-on-error and soft-fail shells on mandatory runs.
 N2: pytest-socket is a hard requirement (no importorskip).
 #119 Impl-A: exact allowlist for mandatory runs; reject job/step if: and
 shell: overrides on mandatory steps; kill V4-M01–M09 mutants.
+#119 B1 repair: X1 step shell (existing), X2 defaults.run.shell, X3 pytest env
+bypass keys, X4 push+pull_request triggers (YAML ``on`` → ``True``).
 """
 from __future__ import annotations
 
@@ -33,6 +35,14 @@ SOFT_FAIL_PATTERNS = (
     re.compile(r"\|\|\s*exit\s+0\b"),
 )
 
+# #119 X3: env keys that can bypass exact pytest allowlist / plugin policy.
+BANNED_PYTEST_ENV_KEYS = frozenset({"PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH"})
+
+# #119 X4: restrictive filters on required triggers (prefer disallow).
+RESTRICTIVE_TRIGGER_FILTER_KEYS = frozenset(
+    {"branches", "branches-ignore", "paths", "paths-ignore", "tags", "tags-ignore"}
+)
+
 
 def _load_workflow_text(text: str) -> dict:
     data = yaml.safe_load(text)
@@ -56,6 +66,18 @@ def _all_steps(data: dict) -> list[dict]:
     for job in _jobs(data).values():
         steps.extend(job.get("steps") or [])
     return steps
+
+
+def _workflow_on(data: dict):
+    """Return workflow ``on:`` block.
+
+    PyYAML 1.1 loaders map the key ``on`` to boolean ``True``.
+    """
+    if "on" in data:
+        return data["on"]
+    if True in data:
+        return data[True]
+    raise AssertionError("workflow missing on: triggers")
 
 
 def _assert_no_continue_on_error(data: dict) -> None:
@@ -101,7 +123,7 @@ def _assert_no_if_on_jobs_or_steps(data: dict) -> None:
 
 
 def _assert_no_shell_on_mandatory_steps(data: dict) -> None:
-    """#119 O3: shell: override forbidden on steps carrying exact allowlisted runs."""
+    """#119 O3 / X1: shell: override forbidden on steps carrying exact allowlisted runs."""
     allow = set(REQUIRED_EXACT_RUNS)
     for step in _all_steps(data):
         run = str(step.get("run") or "").strip()
@@ -109,6 +131,91 @@ def _assert_no_shell_on_mandatory_steps(data: dict) -> None:
             continue
         assert "shell" not in step, (
             f"shell: override not allowed on mandatory step: {step.get('name')!r}"
+        )
+
+
+def _assert_no_defaults_run_shell(data: dict) -> None:
+    """#119 X2: defaults.run.shell forbidden at workflow and job level."""
+    defaults = data.get("defaults")
+    if isinstance(defaults, dict):
+        run_defaults = defaults.get("run")
+        if isinstance(run_defaults, dict):
+            assert "shell" not in run_defaults, (
+                "defaults.run.shell not allowed at workflow level"
+            )
+    for job_name, job in _jobs(data).items():
+        jdef = job.get("defaults")
+        if not isinstance(jdef, dict):
+            continue
+        jrun = jdef.get("run")
+        if isinstance(jrun, dict):
+            assert "shell" not in jrun, (
+                f"defaults.run.shell not allowed on CI job: {job_name}"
+            )
+
+
+def _env_mapping(raw) -> dict:
+    if raw is None:
+        return {}
+    assert isinstance(raw, dict), f"env must be a mapping, got {type(raw)!r}"
+    return raw
+
+
+def _assert_env_no_banned_pytest_keys(env: dict, where: str) -> None:
+    banned = sorted(BANNED_PYTEST_ENV_KEYS.intersection(env.keys()))
+    assert not banned, (
+        f"banned pytest env key(s) {banned} not allowed in {where} "
+        f"(PYTEST_ADDOPTS/PYTEST_PLUGINS/PYTHONPATH)"
+    )
+
+
+def _assert_no_banned_pytest_env(data: dict) -> None:
+    """#119 X3: reject PYTEST_ADDOPTS / PYTEST_PLUGINS / PYTHONPATH at workflow/job/mandatory step."""
+    _assert_env_no_banned_pytest_keys(_env_mapping(data.get("env")), "workflow env")
+    allow = set(REQUIRED_EXACT_RUNS)
+    for job_name, job in _jobs(data).items():
+        _assert_env_no_banned_pytest_keys(
+            _env_mapping(job.get("env")), f"job env ({job_name})"
+        )
+        for step in job.get("steps") or []:
+            run = str(step.get("run") or "").strip()
+            if run not in allow:
+                continue
+            _assert_env_no_banned_pytest_keys(
+                _env_mapping(step.get("env")),
+                f"mandatory step env ({step.get('name')!r})",
+            )
+
+
+def _assert_required_triggers(data: dict) -> None:
+    """#119 X4: require push + pull_request; reject restrictive filters on them."""
+    on = _workflow_on(data)
+    if isinstance(on, str):
+        triggers = {on}
+        configs: dict = {}
+    elif isinstance(on, list):
+        triggers = {str(x) for x in on}
+        configs = {}
+    elif isinstance(on, dict):
+        triggers = {str(k) for k in on.keys()}
+        configs = on
+    else:
+        raise AssertionError(f"unsupported on: value type {type(on)!r}")
+
+    assert "push" in triggers, "workflow on: must include push"
+    assert "pull_request" in triggers, "workflow on: must include pull_request"
+
+    for name in ("push", "pull_request"):
+        cfg = configs.get(name)
+        if cfg is None:
+            continue
+        if not isinstance(cfg, dict):
+            # bare / non-mapping value — treat as unrestricted trigger OK
+            continue
+        present = sorted(RESTRICTIVE_TRIGGER_FILTER_KEYS.intersection(cfg.keys()))
+        assert not present, (
+            f"restrictive on.{name} filter(s) {present} not allowed "
+            "(must not exclude PRs to main / path-filter CI)"
         )
 
 
@@ -131,12 +238,15 @@ def _assert_module_socket_guards(data: dict) -> None:
 
 
 def assert_workflow_fail_closed(data: dict) -> None:
-    """Full fail-closed CI contract used by live tests and V4/A1 mutations."""
+    """Full fail-closed CI contract used by live tests and V4/A1/X mutations."""
+    _assert_required_triggers(data)
     _assert_required_commands_present(data)
     _assert_no_continue_on_error(data)
     _assert_no_soft_fail_in_runs(data)
     _assert_no_if_on_jobs_or_steps(data)
     _assert_no_shell_on_mandatory_steps(data)
+    _assert_no_defaults_run_shell(data)
+    _assert_no_banned_pytest_env(data)
     _assert_module_socket_guards(data)
 
 
@@ -319,4 +429,88 @@ def test_v4_m09_shell_override_on_mandatory_killed():
     assert needle in text
     data = _load_workflow_text(text.replace(needle, repl, 1))
     with pytest.raises(AssertionError, match="shell:"):
+        assert_workflow_fail_closed(data)
+
+
+# --- #119 B1 repair: X1–X4 mutation proofs ---
+
+
+def test_x1_mandatory_step_shell_killed():
+    """X1: mandatory step shell: override must be KILLED (same contract as V4-M09)."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "      - name: Run tests\n        run: pytest tests -q\n"
+    repl = "      - name: Run tests\n        shell: bash {0}\n        run: pytest tests -q\n"
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match="shell:"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x2_workflow_defaults_run_shell_killed():
+    """X2: workflow defaults.run.shell (bash -c 'exit 0' {0}) must be KILLED."""
+    data = _load_workflow()
+    data["defaults"] = {"run": {"shell": "bash -c 'exit 0' {0}"}}
+    with pytest.raises(AssertionError, match="defaults\\.run\\.shell"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x2_job_defaults_run_shell_killed():
+    """X2: job-level defaults.run.shell must be KILLED."""
+    data = _load_workflow()
+    job = _jobs(data)["test-and-demo"]
+    job["defaults"] = {"run": {"shell": "bash -c 'exit 0' {0}"}}
+    with pytest.raises(AssertionError, match="defaults\\.run\\.shell"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x3_workflow_env_pytest_addopts_killed():
+    """X3: workflow env PYTEST_ADDOPTS=--collect-only must be KILLED."""
+    data = _load_workflow()
+    data["env"] = {"PYTEST_ADDOPTS": "--collect-only"}
+    with pytest.raises(AssertionError, match="PYTEST_ADDOPTS|banned pytest env"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x3_job_env_pytest_plugins_killed():
+    """X3: job env PYTEST_PLUGINS must be KILLED."""
+    data = _load_workflow()
+    _jobs(data)["test-and-demo"]["env"] = {"PYTEST_PLUGINS": "no:cacheprovider"}
+    with pytest.raises(AssertionError, match="PYTEST_PLUGINS|banned pytest env"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x3_mandatory_step_env_pythonpath_killed():
+    """X3: PYTHONPATH on a mandatory allowlisted step must be KILLED."""
+    data = _load_workflow()
+    for step in _jobs(data)["test-and-demo"]["steps"]:
+        if str(step.get("run") or "").strip() == "pytest tests -q":
+            step["env"] = {"PYTHONPATH": "/tmp/evil"}
+            break
+    else:
+        raise AssertionError("mandatory pytest tests -q step not found for X3 mutant")
+    with pytest.raises(AssertionError, match="PYTHONPATH|banned pytest env"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x4_workflow_dispatch_only_killed():
+    """X4: on: workflow_dispatch only (no push/pull_request) must be KILLED."""
+    data = _load_workflow()
+    # Replace triggers; support PyYAML ``on`` → True key.
+    if "on" in data:
+        data["on"] = "workflow_dispatch"
+    else:
+        data[True] = "workflow_dispatch"
+    with pytest.raises(AssertionError, match="push|pull_request"):
+        assert_workflow_fail_closed(data)
+
+
+def test_x4_pull_request_paths_filter_killed():
+    """X4: restrictive pull_request paths filter must be KILLED."""
+    data = _load_workflow()
+    on_key = "on" if "on" in data else True
+    data[on_key] = {
+        "push": None,
+        "pull_request": {"paths": ["docs/**"]},
+    }
+    with pytest.raises(AssertionError, match="restrictive|paths"):
         assert_workflow_fail_closed(data)
