@@ -27,6 +27,22 @@ def main() -> int:
     if provider != "ctrader":
         raise RuntimeError(f"Expected ctrader provider, got: {provider}")
 
+    mock_mode = bool(broker_cfg.get("mock_mode", True))
+    # PR-B #12: ORDERS preflight for non-mock smoke before connect/order.
+    if not mock_mode:
+        from src.quantbuild.execution.live_execution_preflight import (
+            broker_fields_from_cfg,
+            preflight_live_execution,
+        )
+
+        provider_n, environment, account_id = broker_fields_from_cfg(cfg)
+        preflight_live_execution(
+            provider=provider_n,
+            environment=environment,
+            account_id=account_id,
+            intent="ORDERS",
+        )
+
     broker = create_broker(cfg)
     symbol = map_symbol("ctrader", str(cfg.get("symbol", "XAUUSD")))
 

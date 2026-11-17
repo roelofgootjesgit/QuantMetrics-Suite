@@ -223,6 +223,24 @@ def _preflight(args: argparse.Namespace) -> Tuple[bool, List[str], List[str], Di
         if not recovery_cfg.exists():
             errors.append(f"recovery config not found: {recovery_cfg}")
 
+    # PR-B #10: ORDERS preflight before any recovery/subprocess --real launch.
+    if not errors:
+        try:
+            from src.quantbuild.execution.live_execution_preflight import (
+                preflight_live_execution,
+            )
+
+            environment = str(broker.get("environment", "demo") or "demo")
+            account_id = str(creds.get("account_id", "") or "")
+            preflight_live_execution(
+                provider="ctrader",
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        except (RuntimeError, ImportError) as exc:
+            errors.append(f"live execution denied: {exc}")
+
     return len(errors) == 0, errors, warnings, creds, cfg
 
 

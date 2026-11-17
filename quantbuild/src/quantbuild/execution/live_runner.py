@@ -2942,6 +2942,23 @@ class LiveRunner:
         mode = "DRY RUN" if self.dry_run else "LIVE"
         logger.info("Starting LiveRunner in %s mode", mode)
 
+        # PR-B #8: ORDERS preflight before connect / first order when not dry_run.
+        if not self.dry_run:
+            from src.quantbuild.execution.live_execution_preflight import (
+                broker_fields_from_cfg,
+                preflight_live_execution,
+            )
+
+            provider, environment, account_id = broker_fields_from_cfg(self.cfg)
+            if not account_id:
+                account_id = str(self._account_id or "")
+            preflight_live_execution(
+                provider=provider,
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+
         data_source = str(self.cfg.get("data", {}).get("source", "auto")).lower()
         connect_for_market_data = self.dry_run and data_source == "ctrader"
         if (not self.dry_run) or connect_for_market_data:

@@ -23,12 +23,26 @@ from quantbridge.risk.prop_guard import PropGuard
 from quantbridge.risk.risk_engine import RiskSnapshot, TradeIntent
 
 
+_GATE_ENV_KEYS = (
+    "QUANTMETRICS_EXECUTION_AUTHORIZED",
+    "QUANTMETRICS_ALLOWED_ACCOUNT_IDS",
+    "QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS",
+)
+
+
 def load_env_files() -> None:
+    """Load non-gate credentials only. Gate keys must never be minted from files."""
+    from quantbridge.safety.live_execution_gate import (
+        LiveExecutionDenied,
+        assert_dotenv_path_has_no_gate_keys,
+    )
+
     candidates = [ROOT / ".env", ROOT / "local.env"]
     original_env = set(os.environ.keys())
     for env_path in candidates:
         if not env_path.exists():
             continue
+        assert_dotenv_path_has_no_gate_keys(env_path)
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -38,6 +52,8 @@ def load_env_files() -> None:
             value = value.strip()
             if not key or not value:
                 continue
+            if key in _GATE_ENV_KEYS:
+                raise LiveExecutionDenied(f"gate_key_present_in_dotenv:{env_path}")
             if key in original_env:
                 continue
             if env_path.name == "local.env" or key not in os.environ:
@@ -108,13 +124,30 @@ def main() -> int:
     instrument = str(symbol_cfg.get("internal", broker_cfg.get("instrument", "XAUUSD")))
     units = float(args.units if args.units is not None else execution_cfg.get("units", 1.0))
 
+    environment = str(broker_cfg.get("environment", "demo"))
+    # PR-B #12: ORDERS preflight for openapi lifecycle before connect/order.
+    if mode == "openapi":
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+
+        assert_live_execution_allowed(
+            LiveExecutionRequest(
+                provider="ctrader",
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        )
+
     broker = CTraderBroker(
         account_id=account_id,
         access_token=access_token,
         client_id=client_id,
         client_secret=client_secret,
         instrument=instrument,
-        environment=str(broker_cfg.get("environment", "demo")),
+        environment=environment,
         mode=mode,
     )
     alert_callback = build_alert_callback()

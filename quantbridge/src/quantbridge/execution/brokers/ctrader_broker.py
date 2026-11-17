@@ -36,6 +36,20 @@ class CTraderBroker(BrokerContract):
         self._last_success_at: Optional[datetime] = None
 
         if mode == "openapi":
+            # PR-B #4: SESSION preflight before OpenAPI client construction.
+            from quantbridge.safety.live_execution_gate import (
+                LiveExecutionRequest,
+                assert_live_execution_allowed,
+            )
+
+            assert_live_execution_allowed(
+                LiveExecutionRequest(
+                    provider="ctrader",
+                    environment=str(environment),
+                    account_id=str(account_id),
+                    intent="SESSION",
+                )
+            )
             self.client = CTraderOpenApiClient(
                 account_id=account_id,
                 access_token=access_token,

@@ -86,6 +86,24 @@ class CTraderBroker:
             if not try_path.exists():
                 continue
             self._hydrate_credentials_from_dotenv(try_path.parent)
+            # PR-B: early SESSION deny when leaving mock — before OpenAPI construction.
+            from src.quantbuild.execution.live_execution_preflight import (
+                preflight_live_execution,
+            )
+            from quantbridge.safety.live_execution_gate import LiveExecutionDenied
+
+            try:
+                preflight_live_execution(
+                    provider="ctrader",
+                    environment=str(self.environment),
+                    account_id=str(self.account_id or ""),
+                    intent="SESSION",
+                )
+            except LiveExecutionDenied:
+                raise
+            except RuntimeError:
+                raise
+
             if str(try_path) not in sys.path:
                 sys.path.insert(0, str(try_path))
             try:
@@ -102,6 +120,8 @@ class CTraderBroker:
                 )
                 logger.info("Loaded QuantBridge cTrader adapter from %s", try_path)
                 return True
+            except LiveExecutionDenied:
+                raise
             except Exception as e:
                 logger.warning("Failed loading QuantBridge from %s: %s", try_path, e)
                 continue
