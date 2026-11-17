@@ -232,9 +232,18 @@ def _assert_module_socket_guards(data: dict) -> None:
         and "--disable-socket" in str(s.get("run") or "")
     ]
     assert ql, "quantlog step must use working-directory: quantlog with socket guard"
-    joined = "\n".join(runs)
-    # Impl-B will replace this ban with a positive QR requirement; keep for Impl-A.
-    assert "quantresearch" not in joined.lower()
+    # #119 Impl-B O5: positive QuantResearch offline requirement (replaces ban).
+    qr = [
+        s
+        for s in steps
+        if "quantresearch/tests" in str(s.get("run") or "")
+        and "--disable-socket" in str(s.get("run") or "")
+        and "--allow-unix-socket" in str(s.get("run") or "")
+    ]
+    assert qr, (
+        "quantresearch offline step required: "
+        "pytest quantresearch/tests … --disable-socket --allow-unix-socket"
+    )
 
 
 def assert_workflow_fail_closed(data: dict) -> None:
@@ -318,7 +327,7 @@ def test_a1_m03_missing_issue_104_nw_step_killed():
 def test_a1_m04_removed_socket_guard_killed():
     """Mutant: strip --disable-socket from module steps — must fail socket-guard assert."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    mutated = text.replace(" --disable-socket --allow-unix-socket", "", 3)
+    mutated = text.replace(" --disable-socket --allow-unix-socket", "")
     assert "--disable-socket" not in mutated
     data = _load_workflow_text(mutated)
     with pytest.raises(AssertionError):
@@ -392,7 +401,7 @@ def test_v4_m05_drop_nw_gate_killed():
 def test_v4_m06_strip_socket_guard_killed():
     """V4-M06: strip --disable-socket from module steps must fail."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    mutated = text.replace(" --disable-socket --allow-unix-socket", "", 3)
+    mutated = text.replace(" --disable-socket --allow-unix-socket", "")
     assert "--disable-socket" not in mutated
     data = _load_workflow_text(mutated)
     with pytest.raises(AssertionError):
@@ -513,4 +522,33 @@ def test_x4_pull_request_paths_filter_killed():
         "pull_request": {"paths": ["docs/**"]},
     }
     with pytest.raises(AssertionError, match="restrictive|paths"):
+        assert_workflow_fail_closed(data)
+
+
+# --- #119 Impl-B O5: QuantResearch offline step mutations ---
+
+
+def test_impl_b_qr_step_removed_killed():
+    """Mutant: remove quantresearch offline CI step — must fail positive QR require."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    block = (
+        "\n      - name: Run quantresearch tests (offline socket guard)\n"
+        "        run: pytest quantresearch/tests -q --disable-socket --allow-unix-socket\n"
+    )
+    assert block in text
+    mutated = text.replace(block, "\n", 1)
+    assert "quantresearch/tests" not in mutated
+    data = _load_workflow_text(mutated)
+    with pytest.raises(AssertionError, match="quantresearch"):
+        assert_workflow_fail_closed(data)
+
+
+def test_impl_b_qr_without_disable_socket_killed():
+    """Mutant: QR step without --disable-socket — must fail positive QR require."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    old = "pytest quantresearch/tests -q --disable-socket --allow-unix-socket"
+    new = "pytest quantresearch/tests -q --allow-unix-socket"
+    assert old in text
+    data = _load_workflow_text(text.replace(old, new, 1))
+    with pytest.raises(AssertionError, match="quantresearch"):
         assert_workflow_fail_closed(data)
