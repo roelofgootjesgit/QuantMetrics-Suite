@@ -117,8 +117,25 @@ class CTraderBroker:
         except Exception:
             return
 
+        # Deny before any OpenAPI construction if bridge env files mint gate keys (R1 / d).
+        try:
+            from quantbridge.safety.live_execution_gate import (
+                LiveExecutionDenied,
+                default_bridge_env_files,
+                env_file_contains_gate_keys,
+            )
+        except ImportError as exc:
+            raise RuntimeError(f"LiveExecutionDenied: gate_import_failed: {exc}") from exc
+
+        for env_path in default_bridge_env_files(root=bridge_repo_root):
+            if env_file_contains_gate_keys(env_path):
+                raise LiveExecutionDenied(
+                    f"gate_key_present_in_env_file:{env_path.resolve()}"
+                )
+
         merged: Dict[str, str] = {}
         # Prefer .env values over local.env to avoid stale local overrides.
+        # Hydrate CTRADER_* credentials only — never gate keys.
         for env_name in ("local.env", ".env"):
             p = bridge_repo_root / env_name
             if not p.exists():
@@ -126,6 +143,8 @@ class CTraderBroker:
             values = dotenv_values(p)
             for k, v in values.items():
                 if not k:
+                    continue
+                if k.startswith("QUANTMETRICS_"):
                     continue
                 text = str(v).strip() if v is not None else ""
                 if text:

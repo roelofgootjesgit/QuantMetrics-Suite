@@ -44,6 +44,30 @@ class AccountInfo:
     currency: str = "USD"
 
 
+def _oanda_gate(intent: str, *, environment: str, account_id: str) -> None:
+    """Import canonical QuantBridge gate; import failure => deny (P3)."""
+    try:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionDenied,
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+    except ImportError as exc:
+        raise RuntimeError(f"LiveExecutionDenied: gate_import_failed: {exc}") from exc
+
+    try:
+        assert_live_execution_allowed(
+            LiveExecutionRequest(
+                provider="oanda",
+                environment=str(environment),
+                account_id=str(account_id),
+                intent=intent,  # type: ignore[arg-type]
+            )
+        )
+    except LiveExecutionDenied:
+        raise
+
+
 class OandaBroker:
     def __init__(
         self,
@@ -60,6 +84,7 @@ class OandaBroker:
         self._connected = False
 
     def connect(self) -> bool:
+        _oanda_gate("SESSION", environment=self.environment, account_id=self.account_id)
         if not self.account_id or not self.token:
             logger.error("Oanda credentials not configured")
             return False
@@ -130,6 +155,7 @@ class OandaBroker:
     def submit_market_order(self, instrument: Optional[str] = None, direction: str = "BUY",
                             units: float = 1.0, sl: Optional[float] = None, tp: Optional[float] = None,
                             comment: str = "") -> OrderResult:
+        _oanda_gate("ORDERS", environment=self.environment, account_id=self.account_id)
         if not self.is_connected:
             return OrderResult(success=False, message="Not connected")
         inst = instrument or self.instrument
@@ -161,6 +187,7 @@ class OandaBroker:
             return OrderResult(success=False, message=str(e))
 
     def modify_trade(self, trade_id: str, sl: Optional[float] = None, tp: Optional[float] = None) -> bool:
+        _oanda_gate("ORDERS", environment=self.environment, account_id=self.account_id)
         if not self.is_connected:
             return False
         data: Dict[str, Any] = {}
@@ -179,6 +206,7 @@ class OandaBroker:
             return False
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> bool:
+        _oanda_gate("ORDERS", environment=self.environment, account_id=self.account_id)
         if not self.is_connected:
             return False
         try:

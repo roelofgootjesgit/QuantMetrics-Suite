@@ -2,3 +2,5 @@
 -e ./quantlog
 -e ./quantanalytics
 pytest
+python-dotenv>=1.0
+pyyaml>=6.0

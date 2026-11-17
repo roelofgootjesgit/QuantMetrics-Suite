@@ -186,7 +186,52 @@ class CTraderOpenApiClient:
             "time": datetime.now(timezone.utc).isoformat(),
         }
 
+    def _assert_session_gate(self) -> None:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionDenied,
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+
+        try:
+            assert_live_execution_allowed(
+                LiveExecutionRequest(
+                    provider="ctrader",
+                    environment=str(self.environment),
+                    account_id=str(self.account_id),
+                    intent="SESSION",
+                )
+            )
+        except LiveExecutionDenied:
+            raise
+        except Exception as e:  # pragma: no cover - defensive
+            raise LiveExecutionDenied(f"session_gate_failed: {e}") from e
+
+    def _assert_orders_gate(self) -> None:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionDenied,
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+
+        try:
+            assert_live_execution_allowed(
+                LiveExecutionRequest(
+                    provider="ctrader",
+                    environment=str(self.environment),
+                    account_id=str(self.account_id),
+                    intent="ORDERS",
+                )
+            )
+        except LiveExecutionDenied:
+            raise
+        except Exception as e:  # pragma: no cover - defensive
+            raise LiveExecutionDenied(f"orders_gate_failed: {e}") from e
+
     def connect(self) -> bool:
+        # Fail-closed gate BEFORE any network client construction (issue #104).
+        self._assert_session_gate()
+
         try:
             from ctrader_open_api import Client, EndPoints, TcpProtocol
             from ctrader_open_api.messages.OpenApiMessages_pb2 import (
@@ -205,7 +250,14 @@ class CTraderOpenApiClient:
         if not self._ensure_reactor():
             return False
 
-        host = EndPoints.PROTOBUF_DEMO_HOST if self.environment.lower() == "demo" else EndPoints.PROTOBUF_LIVE_HOST
+        from quantbridge.safety.live_execution_gate import resolve_ctrader_host
+
+        host_kind = resolve_ctrader_host(str(self.environment))
+        host = (
+            EndPoints.PROTOBUF_DEMO_HOST
+            if host_kind == "demo"
+            else EndPoints.PROTOBUF_LIVE_HOST
+        )
         try:
             from twisted.internet.threads import blockingCallFromThread
 
@@ -444,6 +496,7 @@ class CTraderOpenApiClient:
         comment: str = "",
         client_order_ref: str = "",
     ) -> OrderResult:
+        self._assert_orders_gate()
         if not self.connected:
             message = "session_expired: not connected"
             return OrderResult(success=False, message=message, error_code=classify_error(message))
@@ -557,6 +610,7 @@ class CTraderOpenApiClient:
             return []
 
     def close_trade(self, trade_id: str, units: Optional[float] = None) -> bool:
+        self._assert_orders_gate()
         if not self.connected:
             self._set_error("session_expired: not connected")
             return False
@@ -577,6 +631,7 @@ class CTraderOpenApiClient:
             return False
 
     def modify_trade(self, trade_id: str, sl: Optional[float] = None, tp: Optional[float] = None) -> bool:
+        self._assert_orders_gate()
         if not self.connected:
             self._set_error("session_expired: not connected")
             return False

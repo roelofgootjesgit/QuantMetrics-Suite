@@ -39,14 +39,31 @@ sys.exit(3)
 
 
 def _bootstrap_env() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
     env_path = _ORCHESTRATOR_DIR / ".env"
-    if env_path.is_file():
-        # Orchestrator .env is the intended VPS source of truth when using QuantOS (repo folder quantmetrics_os).
-        load_dotenv(env_path, override=True)
+    if not env_path.is_file():
+        return
+    # Refuse gate keys via dotenv_values + snapshot (issue #104 B1 / N10b).
+    # Auth is process/systemd only — never minted from orchestrator .env.
+    bridge_src = (_QUANTMETRICS_OS_ROOT.parent / "quantbridge" / "src").resolve()
+    if bridge_src.is_dir() and str(bridge_src) not in sys.path:
+        sys.path.insert(0, str(bridge_src))
+    try:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionDenied,
+            load_dotenv_refusing_gate_keys,
+        )
+    except ImportError as exc:
+        print(f"Refuse startup: live gate import failed: {exc}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        load_dotenv_refusing_gate_keys(env_path, override=True)
+    except LiveExecutionDenied as exc:
+        print(
+            f"Refuse startup: {exc}. "
+            "Use external process/systemd EnvironmentFile only.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 def _require_dir(var: str) -> Path:

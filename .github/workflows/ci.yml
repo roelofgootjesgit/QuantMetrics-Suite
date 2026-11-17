@@ -24,5 +24,8 @@ jobs:
       - name: Run tests
         run: pytest tests -q
 
+      - name: Run issue #104 live-gate negative + mutation suite
+        run: pytest tests/test_live_execution_gate_n.py tests/test_live_execution_gate_w.py tests/test_live_execution_gate_mutation.py -q
+
       - name: Run deterministic demo
         run: python run_demo.py
