@@ -1,7 +1,10 @@
-"""Liquidity Sweep – ICT stop hunt then reversal."""
-import pandas as pd
-import numpy as np
+"""Liquidity Sweep – flag on first valid reversal (confirmation), not the sweep bar."""
+from __future__ import annotations
+
 from typing import Dict
+
+import numpy as np
+import pandas as pd
 
 from src.quantbuild.strategy_modules.base import BaseModule
 
@@ -13,7 +16,7 @@ class LiquiditySweepModule(BaseModule):
 
     @property
     def description(self) -> str:
-        return "ICT stop hunts – fake breakouts before reversal"
+        return "ICT stop hunts – confirmed on first valid reversal within window"
 
     def get_config_schema(self) -> Dict:
         return {
@@ -26,9 +29,10 @@ class LiquiditySweepModule(BaseModule):
 
     def calculate(self, data: pd.DataFrame, config: Dict) -> pd.DataFrame:
         df = data.copy()
-        lookback = config.get("lookback_candles", 20)
-        thresh = config.get("sweep_threshold_pct", 0.2) / 100.0
-        rev_n = config.get("reversal_candles", 3)
+        lookback = int(config.get("lookback_candles", 20))
+        thresh = float(config.get("sweep_threshold_pct", 0.2)) / 100.0
+        rev_n = int(config.get("reversal_candles", 3))
+        # Causal trailing swings (prior bar only).
         df["swing_high"] = df["high"].rolling(lookback, center=False).max().shift(1)
         df["swing_low"] = df["low"].rolling(lookback, center=False).min().shift(1)
 
@@ -53,20 +57,22 @@ class LiquiditySweepModule(BaseModule):
             h = high_arr[i]
             l_ = low_arr[i]
 
+            # Bullish: sweep below swing low, then first reversal up within window → flag at reversal j.
             if l_ <= sl_val * (1 - thresh):
                 end_j = min(i + rev_n + 1, n)
                 for j in range(i, end_j):
                     if high_arr[j] >= sl_val * (1 + thresh):
-                        bullish_sweep[i] = True
-                        swept_low[i] = sl_val
+                        bullish_sweep[j] = True
+                        swept_low[j] = sl_val
                         break
 
+            # Bearish: sweep above swing high, then first reversal down → flag at reversal j.
             if h >= sh * (1 + thresh):
                 end_j = min(i + rev_n + 1, n)
                 for j in range(i, end_j):
                     if low_arr[j] <= sh * (1 - thresh):
-                        bearish_sweep[i] = True
-                        swept_high[i] = sh
+                        bearish_sweep[j] = True
+                        swept_high[j] = sh
                         break
 
         df["bullish_sweep"] = bullish_sweep
