@@ -4,7 +4,7 @@
 **Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/118  
 **Branch:** `cursor/issue-106-ci-coverage-plan-3716`  
 **Prior CODE APPROVE head:** `5bed81e67c186ff3817279525ff1961df4130d54`  
-**This hardening head:** *(PR tip / `git rev-parse HEAD` after push)*  
+**This hardening head (CI green):** `552d817a601187c7f18d46cdfa1b529a424a04b1`  
 **Scope:** **A1 + N2 only** (tech-lead comment `6956182578`)  
 **Stop line:** **READY FOR CLAUDE A1 DIFF RECHECK #106**
 
@@ -74,7 +74,10 @@ pytest tests/test_ci_workflow_preservation.py -q
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| *(fill after push)* | | tip | pending |
+| push | [44141436457](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44141436457) | `552d817…` | **success** |
+| pull_request | [44141450822](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44141450822) | `552d817…` | **success** |
+
+Job counts on `552d817`: **119** / **64** / **43** / demo / **45** / **61** / **247+1 skip**.
 
 ---
 
