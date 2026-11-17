@@ -1,25 +1,57 @@
 # Issue #127 — M0.5 plan: parquet timestamp audit + causal feature restoration
 
-**Status:** PROPOSED — plan only; awaiting Claude plan review  
+**Status:** PROPOSED — plan repair after Claude **REQUEST CHANGES** @ `fca1d44`  
 **Issue:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/issues/127  
-**Tech-lead brief:** issue comment `6961024293` (2026-11-17 22:07 Europe/Amsterdam) — **DATA TIMESTAMP AUDIT / PLAN ONLY**  
+**Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/128  
+**Tech-lead briefs:** issue comment `6961024293`; owner follow-up (REQUEST CHANGES planupdate) — **PLAN ONLY**  
 **Branch:** `cursor/issue-127-m05-timestamp-plan-3716`  
-**Base:** `main` @ `42e31d8ae07418c89bc050b6fe45412b21b30f25` (ADR-001 squash merge via #126)  
-**Prerequisite ADR:** `docs/adr/ADR-001-canonical-backtest-engine.md` (M0.5 gate before PROP-03)  
-**Mode:** PLAN ONLY — no production code, no historical-record edits, no workflow/CI YAML changes, no trading/broker/VPS  
-**Stop line:** **READY FOR CLAUDE M0.5 PLAN REVIEW #127**
+**Base:** `main` @ `42e31d8ae07418c89bc050b6fe45412b21b30f25` (ADR-001 via #126)  
+**Prerequisite ADR:** `docs/adr/ADR-001-canonical-backtest-engine.md`  
+**Mode:** PLAN ONLY — no production code, no historical-record edits, no workflow/CI YAML, no trading/broker/VPS  
+**Stop line:** **READY FOR CLAUDE M0.5 PLAN DIFF RECHECK #127**
+
+**Gates unchanged:** PROP-03 BLOCKED; PIT Gate A **BLOCKED**; production Cushing allowlist **empty**.
+
+---
+
+## Change log (repair vs `fca1d44`)
+
+| ID | Change |
+|---|---|
+| **B1** | §6 + Slice A expanded: **FVG**, **liquidity sweep**, **order blocks**; generic truncation harness over **all** `strategy_modules/` + `indicators/` output columns; missing coverage **fails** |
+| **B2** | Exact per-event **confirmation-time** rules; no back-write to origin bar; **not-earlier** and **not-later** tests; trailing-only pivot = explicit strategy change |
+| **O1** | MSS degeneration documented; repaired MSS = **new feature** → new baseline + new experiment IDs |
+| **O2** | Fixtures: ties, short series, positive events, `validity_candles=1`; never-fires ≠ pass |
+| **O3** | Mandatory killed SOURCE_MUTATION for structure_context, swing, MSS, FVG, sweep, OB — commands / `__file__` / failing node ids |
+| **+** | M15→H1 aggregation probe (`label`/`closed`); H1-from-M15 design option (does **not** clear DTA); CEO-analyst text updated for default SQE entry triggers |
+
+---
+
+## Claude REQUEST CHANGES — acceptance checklist
+
+| ID | Requirement | In this plan? |
+|---|---|---|
+| **B1** | FVG / sweep / OB in §6 + Slice A; harness covers all modules/indicators + all output columns; silent skip forbidden | [x] §6.2–6.3, §7 Slice A, §8 |
+| **B2** | Exact confirmation rules; no origin back-write; not-earlier + not-later; trailing-only = strategy change | [x] §6.4 |
+| **O1** | MSS degeneration; repaired MSS = new feature / new experiment IDs | [x] §6.5 |
+| **O2** | Fixtures (ties, short, positive, `validity_candles=1`); never-fire ≠ pass | [x] §8.2 |
+| **O3** | SOURCE_MUTATION kill evidence for ≥ structure, swing, MSS, FVG, sweep, OB | [x] §8.3 |
+| **+probe** | M15→H1 agg probe with `label`/`closed`, full OHLC, incomplete hours; relative only | [x] §5.2 P6, §5.4 |
+| **+option** | H1 derived from M15 as design option; does not lift DTA | [x] §5.4 |
+| **+CEO** | Default SQE entry triggers hit; MSS non-fire in default config = **INDEPENDENT_REVIEWER** | [x] §9 |
+
+Cursor did **not** independently re-run Claude’s truncation experiments; those counts remain **INDEPENDENT_REVIEWER**.
 
 ---
 
 ## 1. Objective
 
-1. Audit **real** M15/H1 parquet timestamp semantics and provenance (open vs close label, timezone/DST, bar availability, source).  
-2. Separate **VERIFIED** (source/commands) from **UNVERIFIED** (needs data or external attestation).  
-3. If real OHLC parquet is inaccessible: state an explicit **data-access blocker** and a **fail-closed data contract** — **do not guess** `+1h` or open/close.  
-4. Design ordered **M0.5** implementation slices: causal pivots/MSS/regime, HTF availability after verified close, prefix/truncation invariance in **root CI**, source-mutant kill tests.  
-5. Keep historical EXP/HYP records intact; treat prior conclusions as **`UNVERIFIED_LOOKAHEAD`**; request **CEO-analyst** communication before treating those runs as evidence.
+1. Audit **real** M15/H1 parquet timestamp semantics and provenance; separate **VERIFIED** / **UNVERIFIED**.  
+2. If real OHLC absent: **B-DATA-001** + fail-closed **DTA** — no guessed `+1h` / open-close.  
+3. Design **M0.5** so **all** ICT/indicator features used by SQE (including FVG, sweep, OB) become **confirmation-time causal**, with generic truncation harness + source mutants in root CI.  
+4. Preserve historical records; mark prior SQE/structure conclusions **`UNVERIFIED_LOOKAHEAD`**; CEO-analyst notice before treating as evidence.
 
-**PROP-03 (#111) remains BLOCKED** until M0.5 is implemented, independently validated, and the timestamp contract is satisfied.
+**There is currently no reliable basis to judge whether SQE “works”** until M0.5 (Slice A at minimum on synthetic data, Slice B + DTA for HTF) is validated. Magnitude of result distortion from look-ahead remains **unknown** (no PnL inference from label diffs).
 
 ---
 
@@ -27,244 +59,273 @@
 
 | Out of scope | Why |
 |---|---|
-| Any `.py` / workflow / CI YAML edits | Tech-lead: plan only |
-| Fetching live/broker data or writing parquet into the repo | Safety + gitignore; not this slice |
-| Mutating historical `experiment.json` / dossiers | Preserve records; label only |
-| Assuming open- vs close-time or `+1h` HTF shift | Forbidden without evidence |
-| Claiming PnL impact from Claude’s 113/537 label diffs | Not a P&L estimate (**INDEPENDENT_REVIEWER**) |
+| Any `.py` / workflow / CI YAML edits | Plan-only repair |
+| Implementing causal features | After plan APPROVE |
+| Mutating historical experiment JSON | Preserve; label only |
+| Guessing timestamp convention | B-DATA-001 |
+| Inferring PnL bias from Claude % | Forbidden |
 | Merge | Draft only |
 
 ---
 
 ## 3. Audit method (commands actually run)
 
-**Host:** Linux agent, Python 3.12.3. Repo at base SHA above.
+**Host:** Linux agent, Python 3.12.3. Base `42e31d8…`.
 
 ```bash
-git rev-parse HEAD   # 42e31d8… on branch start
 find . -name '*.parquet' | head
 rg -n 'parquet|market_cache' quantbuild/.gitignore
-rg -n 'load_parquet|tz_localize\(None\)|OFFER_SIDE_BID|reindex\(.*ffill' \
-  quantbuild/src/quantbuild --glob '*.py'
+rg -n 'center=True|bullish_fvg|bullish_sweep|bullish_ob' quantbuild/src/quantbuild --glob '*.py'
+ls quantbuild/src/quantbuild/strategy_modules/ict quantbuild/src/quantbuild/indicators
 python3 -c "import importlib.util as u; print(u.find_spec('dukascopy_python'), u.find_spec('pyarrow'))"
 ```
 
-**Results (this environment):**
-
 | Probe | Result |
 |---|---|
-| `*.parquet` under repo working tree | **None found** (market OHLC absent) |
-| `data/` / `quantbuild/data/` | `quantlog_events/` + `README_MARKET_CACHE.md` only — **no** `market_cache/*.parquet` |
-| `quantbuild/.gitignore` | `data/market_cache/`, `data/market_cache_dukascopy/`, `*.parquet` — cache **intentionally not in git** |
-| `dukascopy_python` / `pyarrow` | **Not installed** in this agent image |
-| Network fetch of Dukascopy for this plan | **NOT RUN** (would be a data/ops action; plan forbids inventing conventions from a blind fetch without attested contract) |
-
-**Implication:** empirical open/close/DST/availability checks on **real** M15/H1 files are **BLOCKED** here. Downstream design must fail closed until a attested sample is available.
+| Real `*.parquet` OHLC | **None** (gitignored cache absent) |
+| `dukascopy_python` / `pyarrow` | **Not installed** |
+| ICT modules present | structure_context, MSS, FVG, liquidity_sweep, order_blocks, displacement, imbalance_zones, … |
+| Claude truncation re-run by Cursor | **NOT RUN** |
 
 ---
 
 ## 4. Timestamp & provenance audit
 
-### 4.1 VERIFIED (from repository source / local probes)
+### 4.1 VERIFIED
 
 | ID | Finding | Evidence |
 |---|---|---|
-| **V1** | Canonical cache path is `data/market_cache/<SYMBOL>/{15m,1h,...}.parquet` | `parquet_loader.path_for`; `quantbuild/data/README_MARKET_CACHE.md` |
-| **V2** | Market parquet is **gitignored**; clean clones / this agent have **no** committed OHLC | `.gitignore` + `find` |
-| **V3** | Loader accepts DatetimeIndex or `timestamp` column; sorts on save | `load_parquet` / `save_parquet` |
-| **V4** | After Dukascopy/cTrader/yfinance normalize, **tz-aware indices are stripped to naive** via `tz_localize(None)` | `_fetch_dukascopy` L174–175; `_normalize_ohlcv_frame` L229–230; fetch script L60–61 |
-| **V5** | Range filters treat naive index as comparable to UTC when the other side is tz-aware (localize/convert then drop tz) | `load_parquet` L68–81 |
-| **V6** | Dukascopy path requests **`OFFER_SIDE_BID`** only | `_fetch_dukascopy`; `fetch_dukascopy_xauusd.py` |
-| **V7** | Fetch scripts pass **UTC** `start`/`end` when naive inputs are upgraded | `_fetch_dukascopy` L153–156; fetch script uses `datetime.now(timezone.utc)` |
-| **V8** | London/NY overlap strategy **documents** H1 index as **“open time”** (code comment + test docstring) | `london_ny_overlap_breakout.py` header; `test_london_ny_overlap_breakout.py` “First bar with open time ≥ 13:30 UTC” |
-| **V9** | Live stale telemetry compares wall-clock UTC to **last 15m bar index** (assumes index is a usable “bar time”, not proven open vs close) | `live_runner._bar_lag_minutes` |
-| **V10** | H1→M15 alignment today is `Series.reindex(m15.index, method="ffill")` after structure/regime on H1 — **no** explicit close-shift | `engine._apply_h1_gate`; `regime/detector.py` |
-| **V11** | Centered future-looking pivots/MSS exist (`center=True`) and feed SQE / H1 gate / regime / NY / London-regime — see ADR-001 §6.1 | ADR-001 + source paths |
-| **V12** | Claude truncation: **113/537** labels differ (**21.0%**) | **INDEPENDENT_REVIEWER** only — not re-run here; **not** a P&L figure |
+| **V1–V10** | Cache path, gitignore, naive UTC strip, bid-side Dukascopy, H1→M15 `ffill`, London “open time” **comment** | Unchanged from prior plan §4.1 |
+| **V11** | Centered pivots/MSS (`center=True`) | `structure_context.py`, `swing.py`, `market_structure_shift.py` |
+| **V12** | Claude structure truncation **113/537** (21.0%) | **INDEPENDENT_REVIEWER** — not PnL |
+| **V13** | Default SQE runs **liquidity_sweep**, **fair_value_gaps**, **order_blocks**, **displacement**, **MSS**, **structure_context** in `_compute_modules_once` | `strategies/sqe_xauusd.py` |
+| **V14** | FVG writes flags using a **3-candle** gap test but places True on the **middle** index (`bullish_fvg[1:-1] = bull_mask[2:]`) | `fair_value_gaps.py` ~L48–60 |
+| **V15** | Sweep sets True on **sweep bar `i`** after scanning **future** `j ∈ [i, i+rev_n]` for reversal | `liquidity_sweep.py` ~L56–70 |
+| **V16** | OB sets True on **origin bar `i`** using **future** `high/low[i+1 : i+1+n_c]` | `order_blocks.py` ~L42–54 |
+| **V17** | MSS non-firing under default config in Claude’s experiment | **INDEPENDENT_REVIEWER** (not re-run by Cursor) |
 
-### 4.2 UNVERIFIED (must not be assumed)
+### 4.2 UNVERIFIED
 
-| ID | Question | Why unverified |
+| ID | Question |
+|---|---|
+| **U1–U7** | Open vs close index, DST, availability lag, `ffill` ≡ completed H1, cache provenance, bid vs venue, DST session edges — **unchanged**; need real data + DTA |
+| **U8** | Quantitative impact of FVG/sweep/OB/MSS look-ahead on SQE PnL / trade counts | **Unknown** — do not invent |
+
+### 4.3 Blocker **B-DATA-001**
+
+No authentic M15/H1 parquet in this environment/git. HTF absolute convention + availability lag remain blocked. Slice A may use **synthetic** OHLC after plan APPROVE. Slice B stays DTA-gated.
+
+---
+
+## 5. Fail-closed data contract (DTA) + probes
+
+### 5.1 DTA fields (unchanged essence)
+
+`symbol`, `timeframe`, `path`, `content_sha256`, `source`, `offer_side`, **`index_semantics`** (`bar_open_utc` \| `bar_close_utc` \| `other`), `timezone_storage`, `dst_policy`, `bar_complete_rule`, `attested_by` / `attested_at_utc` / `method`, `probe_results`.
+
+Missing/unknown semantics → fail closed for research HTF use.
+
+### 5.2 Probe suite
+
+| Probe | Role |
+|---|---|
+| **P1–P5** | Spacing, open/close heuristic vs vendor docs, DST span, HTF join leakage, provenance re-fetch (prior plan) |
+| **P6 — M15→H1 aggregation** | From an attested M15 series, aggregate to H1 with **explicit** pandas/`resample` **`label`** and **`closed`** parameters documented in the probe config. Compare **full OHLC** (and volume if present) to vendor/stored H1 where available. **Incomplete hours:** drop or quarantine partial buckets; never silently treat as complete. **Scope:** tests **relative** labeling consistency between M15 and derived H1. **Does not** prove absolute open/close convention of the vendor file, nor publication/`available_at` lag — those remain **separate** DTA evidence (U1/U3). |
+
+### 5.3 Interim policy
+
+All structure/regime/**SQE-entry** dependent historical conclusions: **`UNVERIFIED_LOOKAHEAD`** / **`VALIDATION_REQUIRED`**. No hard-coded `+1h`.
+
+### 5.4 Design option — derive H1 from M15
+
+| Option | Pros | Cons | DTA impact |
+|---|---|---|---|
+| Keep separate H1 parquet + attested join | Matches current loaders | Needs U1/U3 solved | Still requires DTA |
+| **Derive H1 from M15** via P6 (`label`/`closed` fixed in code + tests) | Single source series; relative consistency enforceable in CI with synthetics + real M15 | Still needs M15 DTA for absolute time/availability; incomplete hours policy; may diverge from broker H1 | **Does not lift B-DATA-001 / DTA** for absolute convention or lag |
+
+Decision deferred to Slice B design after plan APPROVE; documenting the option is mandatory so implementers do not treat derivation as a DTA bypass.
+
+---
+
+## 6. Affected causal paths (expanded)
+
+### 6.1 Prior surfaces (ADR-001)
+
+structure_context, swing pivots / `last_swing_*`, MSS, SQE, H1 gate, regime, NY engines, London regime labels.
+
+### 6.2 Default SQE entry / ICT modules — **look-ahead / back-write**
+
+| Module | Path | Current defect (VERIFIED in source) | SQE use |
+|---|---|---|---|
+| **FVG** | `ict/fair_value_gaps.py` | 3-candle gap; flag on **middle** bar needs **third** candle known | Entry pillar (`in_*_fvg`); default entry combo |
+| **Liquidity sweep** | `ict/liquidity_sweep.py` | Flag on **sweep** bar after **future** reversal within `reversal_candles` | Entry pillar / combo (`*_sweep`) |
+| **Order blocks** | `ict/order_blocks.py` | Flag on **origin** bar using **future** `min_candles` extrema | `in_*_ob` columns (available to SQE) |
+| **MSS** | `ict/market_structure_shift.py` | `center=True` swings; default config may **never fire** | Trend pillar module list |
+| **Displacement** | `ict/displacement.py` | Rolling sum looks **backward** only (likely causal) — still **must** be in harness | Entry combo |
+| **Imbalance zones** | `ict/imbalance_zones.py` | Include in harness; classify causal vs leak in Slice A inventory | Module present |
+| **Structure** | `ict/structure_context.py` | Centered pivots | Structure filters / H1 / regime |
+| **Regime** | `regime/detector.py` | Via structure + ffill | Hub / NY / London |
+
+**Conclusion:** Standard SQE **entry triggers** (sweep + FVG at minimum; OB columns computed every run) are in the look-ahead set. Basis to evaluate SQE edge: **absent** until M0.5.
+
+### 6.3 Generic truncation harness (normative)
+
+Harness discovers **every** calculatable unit under:
+
+- `quantbuild/src/quantbuild/strategy_modules/` (including `ict/`, `regime/`, `news_gate` if it emits frame columns)
+- `quantbuild/src/quantbuild/indicators/`
+
+For each unit, after `calculate` / public indicator call, assert truncation invariance on **every output column** added or overwritten (bool/float/object).  
+
+| Rule | Detail |
+|---|---|
+| Registration | Explicit registry list checked into tests; **OR** auto-discovery with allowlist |
+| Missing module | If a module file exists under those trees but is **not** registered → **test FAIL** (no silent skip) |
+| Empty fire | A module that never emits True/non-null on fixtures **fails** positive-event requirements (§8.2) — cannot “pass” truncation alone by being all-False |
+| Root CI | Harness runs in **root** pytest path used by CI after impl (plan only here) |
+
+### 6.4 Confirmation-time rules (no origin back-write)
+
+**Invariant:** event flag / level becomes True only on the bar index at which the **last required observation** is known. **Never** write back onto an earlier origin bar.
+
+| Event | Confirmation bar (normative) | Forbidden |
 |---|---|---|
-| **U1** | Are stored M15/H1 index stamps **bar-open** or **bar-close** (or something else)? | No real parquet inspected; Dukascopy package docs not available offline; only London **comment** asserts open-time |
-| **U2** | Is the stripped naive index always **UTC wall time**, or can DST/local broker zones leak before strip? | Strip erases tz metadata; no sample + no DST round-trip test in-repo for cache files |
-| **U3** | When is an H1 bar **available** for M15 decisions (close instant vs next open vs provider lag)? | No `available_at` / publication lag fields on OHLC path |
-| **U4** | Does `ffill` of H1→M15 equal “use last **completed** H1”? | Depends on U1/U3; `+1h` shift is **explicitly not assumed** |
-| **U5** | Provenance of any given research cache: Dukascopy vs cTrader vs yfinance vs mixed overwrite? | `attrs` source tags exist on some live returns but are **not** persisted into parquet schema |
-| **U6** | Bid-only Dukascopy vs FTMO/executable venue prices | Master §13; PROP-01/02 — out of M0.5 except as cost caveat |
-| **U7** | Exact DST behavior across London session boundaries on cached series | Needs dated sample spanning DST transitions |
+| **Pivot** (structure / swing) | First bar at or after origin where the full **right window** of `pivot_bars` (or MSS `swing_lookback`) has closed | `center=True` labeling on origin before right side exists |
+| **FVG** | **Third candle** of the 3-candle pattern (the bar that closes the gap test) | Writing `bullish_fvg`/`bearish_fvg` on the middle/origin bar |
+| **Sweep** | Bar of the **first valid reversal** within `reversal_candles` after the sweep excursion | Setting `*_sweep` on the sweep bar when reversal is still in the future |
+| **Order block** | Bar at which the **full** confirmation condition is known (after `min_candles` forward extrema + move% satisfied) | Setting `*_ob` on the origin candle while future bars unread |
+| **MSS** | Break bar evaluated only against **causally available** swing levels (confirmation-shifted or trailing policy) | Centered swing highs/lows |
 
-### 4.3 Explicit data-access blocker
+**Timing tests (each event type):**
 
-| Blocker | Detail |
+1. **Not earlier:** on prefix ending before confirmation, feature at confirmation index is false/absent.  
+2. **Not later:** on prefix that **includes** the confirmation bar, feature becomes true **on that same index** (not delayed an extra bar beyond the rule).  
+
+**Trailing-only pivots:** allowed only as an **explicit strategy/product change** (separate decision + config flag + experiment IDs). Default M0.5 repair path is **confirmation-time shift**, not silent trailing redefinition.
+
+### 6.5 MSS degeneration (O1)
+
+| Topic | Plan requirement |
 |---|---|
-| **B-DATA-001** | This plan environment (and git) contain **no** authentic `15m.parquet` / `1h.parquet` for research symbols. |
-| **Consequence** | HTF causal alignment rules **cannot** be finalized. Any implementation that hard-codes open/close or `+1h` before attestation is **out of policy**. |
-| **Owner unblock** | Provide a **read-only** attested sample (or authorize a documented fetch job outside this plan PR) meeting the fail-closed contract in §5. |
-| **CEO-analyst** | Until M0.5 + contract green, communicate that EXP-2021-2025 / HYP-002 / HYP-003 (and other structure/regime-dependent runs) are **`UNVERIFIED_LOOKAHEAD`** — not evidence for promotion. |
+| Current behavior | Centered swings + threshold; Claude reported **no fires** under default SQE MSS config → **INDEPENDENT_REVIEWER** |
+| After causal repair | Confirmation-shifted (or explicitly trailing) swings change semantics and likely fire-rate |
+| Research treatment | Restored MSS = **functionally new feature** |
+| Governance | **New baseline** + **new experiment IDs**; do not attach repaired-MSS metrics to old EXP/HYP IDs; old MSS-dependent claims stay **`UNVERIFIED_LOOKAHEAD`** |
 
 ---
 
-## 5. Fail-closed data contract (proposed; implement after plan APPROVE)
+## 7. Ordered implementation slices
 
-Research / HTF feature use MUST refuse to proceed unless a **Data Timestamp Attestation** (DTA) is present and valid.
+### Slice A — Causal ICT/indicators + harness (synthetic OK after APPROVE)
 
-### 5.1 Required attestation fields (per dataset / parquet file)
-
-| Field | Meaning |
+| Item | Spec |
 |---|---|
-| `symbol`, `timeframe` | e.g. XAUUSD, `15m` / `1h` |
-| `path` + `content_sha256` | Exact file hash |
-| `source` | `dukascopy` \| `ctrader` \| `yfinance` \| `other` (+ version/URL if applicable) |
-| `offer_side` | e.g. bid / mid / ask / unknown |
-| `index_semantics` | **`bar_open_utc`** \| **`bar_close_utc`** \| **`other`** (must not be blank) |
-| `timezone_storage` | `naive_utc` \| `aware_utc` \| other — must match loader behavior |
-| `dst_policy` | How DST transitions were handled at ingest |
-| `bar_complete_rule` | When OHLC row may be used for decisions (e.g. “after close instant”) |
-| `attested_by`, `attested_at_utc`, `method` | Human/owner attestation or automated probe ID + evidence link |
-| `probe_results` | Outputs of §5.2 probes |
+| Repair | structure_context, swing, MSS, **FVG**, **sweep**, **OB** (+ displacement/imbalance/others per harness inventory) |
+| Rules | §6.4 confirmation-time; no origin back-write |
+| Tests | Generic truncation harness §6.3; not-earlier/not-later §6.4; fixtures §8.2 |
+| Mutants | §8.3 minimum set |
+| CI | Root CI includes harness |
+| HTF | **Not** required for Slice A unit causality |
 
-**Fail closed:** if `index_semantics` is missing/unknown, or hash mismatches, or probe fails → **no** research HTF alignment, **no** PROP-03 claims, hub research mode returns structured error (implementation later).
+### Slice B — HTF availability (DTA / B-DATA-001)
 
-### 5.2 Minimal probe suite (run on real sample; not in this PR)
+Attested semantics; P6 agg probe; optional H1-from-M15 **without** claiming DTA bypass; regime/H1-gate masks truncation-clean.
 
-| Probe | Pass criterion (illustrative) |
-|---|---|
-| **P1 Spacing** | Median Δt ≈ timeframe (15m/1h); flag gaps/duplicates |
-| **P2 Open vs close heuristic** | Compare index to session logic **only as evidence**, e.g. London test expectation vs alternative close-shifted series — record which matches vendor docs; **do not** auto-pick without attestation |
-| **P3 DST span** | Sample covering EU/US DST change weeks; no duplicated/missing hour anomalies beyond documented market hours |
-| **P4 HTF join** | For assumed semantics S∈{open,close}, compute availability mask for H1→M15; show leakage under wrong S via truncation-style check |
-| **P5 Provenance** | Re-fetch tiny window from declared source (owner-approved) and diff hashes/columns |
+### Slice C — Dataset hash + fail-closed research dates (ADR M2)
 
-Probes produce **evidence artifacts** (tables/logs), not silent defaults.
+### Slice D — Labels / CEO-analyst notice / cross-links (no JSON body rewrites)
 
-### 5.3 Interim policy (until DTA exists)
-
-- Treat all production research conclusions using current OHLC cache as **`UNVERIFIED_LOOKAHEAD`** / **`VALIDATION_REQUIRED`**.  
-- Do **not** implement “shift by 1 hour” as the HTF fix.  
-- Causal pivot repair (M0.5-A) may proceed on **synthetic** series for unit tests; **HTF alignment (M0.5-B)** stays blocked on **B-DATA-001**.
+**PROP-03 unblock:** A + B green, DTA satisfied, mutants killed, independent review on impl SHA.
 
 ---
 
-## 6. Affected causal paths (map for M0.5)
+## 8. Truncation, fixtures, mutants
 
-| Surface | Path | Defect class |
-|---|---|---|
-| Structure labels | `strategy_modules/ict/structure_context.py` | `rolling(..., center=True)` pivots |
-| Swing pivots | `indicators/swing.py` `pivot_highs`/`pivot_lows` (+ review `last_swing_*`) | Centered / future window |
-| MSS | `strategy_modules/ict/market_structure_shift.py` | Centered swing high/low |
-| Default SQE | `strategies/sqe_xauusd.py` | Consumes MSS + structure |
-| H1 gate | `backtest/engine.py` `_apply_h1_gate` | Structure on H1 + `ffill` |
-| Regime | `strategy_modules/regime/detector.py` | Structure + `ffill` |
-| NY sweep reversion | `strategies/ny_sweep_reversion_engine.py` | `add_structure_context` |
-| NY failure reclaim | `strategies/ny_sweep_failure_reclaim_engine.py` | Hub `regime_series` |
-| London overlap | `strategies/london_ny_overlap_breakout.py` | Optional regime labels; documents open-time |
-
-Canonical API remains **`run_backtest`** (ADR-001) — not a certified engine until M0.5 (+ costs later).
-
----
-
-## 7. Ordered implementation slices (after plan APPROVE)
-
-No code in this PR. Suggested issue/PR split:
-
-### Slice A — Causal pivots / MSS / structure (can start without real parquet)
-
-| Item | Spec |
-|---|---|
-| **Goal** | Eliminate future-bar dependency: confirm pivots only after `pivot_bars` right-side bars exist (confirmation-time shift) **or** trailing-only non-centered windows |
-| **Files** | `structure_context.py`, `swing.py`, `market_structure_shift.py` (+ call-site audits) |
-| **Tests** | Per-feature **prefix truncation invariance**: for each `i`, `f(data[:i+1])[i] == f(data)[i]`; **zero mismatches** on structure labels, pivots, MSS |
-| **Mutant** | SOURCE_MUTATION restoring `center=True` (or equivalent leakage) **must fail**; use scratch tree + `PYTHONPATH` + `__file__` check (#124 taxonomy) |
-| **CI** | Root CI job/tests (implementation PR may extend root suite — **not** this plan PR) |
-| **Out** | Regime/SQE/NY inherit fixes where they call repaired APIs |
-
-### Slice B — HTF availability (blocked on DTA / B-DATA-001)
-
-| Item | Spec |
-|---|---|
-| **Goal** | H1 feature available on M15 only after **verified** H1 bar completion per attested `index_semantics` + `bar_complete_rule` |
-| **Forbidden until DTA** | Hard-coded `+1h` or blind `ffill` “fixes” |
-| **Tests** | Truncation invariance on regime labels + H1-gate masks; wrong-semantics mutant killed |
-| **Depends** | Owner sample + §5 probes green |
-
-### Slice C — Dataset hash + research fail-closed dates (aligns ADR M2)
-
-| Item | Spec |
-|---|---|
-| Record `content_sha256` + DTA id on research runs | |
-| Missing `start_date`/`end_date` → fail closed in research mode | |
-
-### Slice D — Documentation / governance labels
-
-| Item | Spec |
-|---|---|
-| Publish `UNVERIFIED_LOOKAHEAD` list (EXP-2021-2025, HYP-002/003, …) without editing historical JSON bodies | |
-| CEO-analyst notice template | |
-| Cross-link ADR-001 §9.1 | |
-
-**PROP-03 unblock checklist:** A green + B green (DTA satisfied) + truncation CI + mutant killed + independent review on impl SHA.
-
----
-
-## 8. Truncation invariance & mutant protocol (normative for impl)
+### 8.1 Truncation invariance
 
 ```text
-For feature f and full series D:
+For every harness feature column c and full series D:
   ∀ i in valid range:
-    f(D[: i+1 ]).iloc[i]  ==  f(D).iloc[i]
+    c(D[: i+1 ]).iloc[i]  ==  c(D).iloc[i]
 ```
 
-| Feature set (minimum) | Zero mismatches required |
+Zero mismatches required for all registered output columns (including quality/in_* rolling columns once defined causally).
+
+### 8.2 Fixtures (O2) — mandatory
+
+| Fixture | Purpose |
 |---|---|
-| Structure labels | yes |
-| Swing pivots | yes |
-| MSS bullish/bearish flags | yes |
-| Regime labels | yes (after structure repair; HTF path after Slice B) |
+| **Ties** | Equal highs/lows at pivot/sweep thresholds — deterministic, documented winner |
+| **Short series** | Length &lt; lookback/validity — no crash; no false positives from empty windows |
+| **Positive events** | Hand-built paths that **must** fire exactly one confirmation index per event type |
+| **`validity_candles=1`** | FVG/OB “in_*” windows — causal persistence edge case |
+| **Never-fire guard** | Config/data where a buggy always-False module would “pass” truncation → **fail** unless positive-event fixture passes for that module |
 
-**SOURCE_MUTATION:** edit only in scratch copy; `PYTHONPATH=<scratch>/...`; verify `module.__file__` under scratch; expect failing node ids listing the restored leak; discard scratch. Label honestly — monkeypatch ≠ source mutation.
+### 8.3 SOURCE_MUTATION (O3) — minimum kill set
 
-**Claude 113/537:** keep as **INDEPENDENT_REVIEWER** baseline motivation; re-measure after Slice A on the same protocol and record new counts — still not PnL.
+For **each** of: `structure_context.py`, `swing.py` (pivots), `market_structure_shift.py`, `fair_value_gaps.py`, `liquidity_sweep.py`, `order_blocks.py`:
+
+1. Copy package tree to scratch; apply mutant that restores future leak / origin back-write.  
+2. `PYTHONPATH=<scratch>/quantbuild/src` (or attested layout);  
+3. `python -c "import …; print(module.__file__)"` must print **scratch** path.  
+4. Run focused harness + not-earlier tests; record **failing node ids**.  
+5. Discard scratch. Label results **SOURCE_MUTATION** only if steps 2–3 verified.
+
+Monkeypatch-only checks remain **MONKEYPATCH_SELFTEST** and do **not** satisfy O3.
+
+Impl evidence table (to be filled in impl PR, not this plan):
+
+| Mutant target | Command | `__file__` | Failing test IDs | Result |
+|---|---|---|---|---|
+| structure_context | _(impl)_ | _(impl)_ | _(impl)_ | |
+| swing pivots | | | | |
+| MSS | | | | |
+| FVG | | | | |
+| sweep | | | | |
+| OB | | | | |
 
 ---
 
-## 9. Historical research posture
+## 9. Historical research posture + CEO-analyst text
 
 | Item | Policy |
 |---|---|
-| EXP-2021-2025 / HYP-002 / HYP-003 / other structure-regime runs | **`UNVERIFIED_LOOKAHEAD`** until clean rerun on M0.5+DTA |
-| Historical files | **Do not mutate** in M0.5 plan or casual cleanups |
-| Communication | Request **CEO-analyst** briefing before any stakeholder treats those metrics as evidence |
-| Rerun | Only after Slice A+B validated; new experiment IDs / explicit rerun governance |
+| EXP-2021-2025 / HYP-002 / HYP-003 / SQE runs | **`UNVERIFIED_LOOKAHEAD`** until M0.5+DTA clean rerun |
+| Historical files | **Do not mutate** |
+| New work after repair | New experiment IDs; MSS especially = new baseline (O1) |
+
+### CEO-analyst notice (template)
+
+> We do **not** yet have a reliable basis to judge whether **SQE** works. Independent review found look-ahead / future-bar use not only in structure pivots and MSS, but also in **default SQE entry-path modules** (liquidity sweep, fair value gaps, order-block columns computed every run). MSS under default configuration was reported as **non-firing** in that review. Truncation label-change rates (e.g. 113/537) are **INDEPENDENT_REVIEWER** findings and are **not** P&L impact estimates. All related historical metrics are **`UNVERIFIED_LOOKAHEAD`** until M0.5 causal repair and timestamp attestation complete. PIT Gate A remains **BLOCKED**; production allowlist empty. No promotion or capital decisions on these numbers.
 
 ---
 
-## 10. Acceptance criteria (this plan PR)
+## 10. Acceptance criteria (this plan repair PR)
 
-- [x] Real-data audit attempted; absence documented as **B-DATA-001**  
-- [x] VERIFIED vs UNVERIFIED separated; no open/close guess  
-- [x] Fail-closed DTA + probe design  
-- [x] Causal path map + ordered slices A–D  
-- [x] Truncation invariance + source-mutant + root-CI requirements stated  
-- [x] UNVERIFIED_LOOKAHEAD + CEO-analyst communication noted  
+- [x] B1/B2/O1–O3 checklist table complete  
+- [x] FVG / sweep / OB + full-module harness in §6 / Slice A  
+- [x] Confirmation rules + not-earlier/not-later + trailing-only policy  
+- [x] MSS new-feature governance  
+- [x] Fixtures + never-fire guard  
+- [x] SOURCE_MUTATION kill set specified  
+- [x] M15→H1 P6 probe + H1-from-M15 option (DTA intact)  
+- [x] CEO-analyst text updated; INDEPENDENT_REVIEWER provenance kept  
 - [x] No code / historical / workflow changes  
-- [ ] Claude **M0.5 PLAN REVIEW** on exact head SHA → APPROVE / REQUEST CHANGES / BLOCK  
+- [ ] Claude **M0.5 PLAN DIFF RECHECK** on exact head SHA  
 - [ ] Owner merge authorization (later; keep draft)
 
 ---
 
-## 11. Tiny next slice after APPROVE
+## 11. After APPROVE
 
-1. **Owner:** supply attested M15+H1 parquet sample (or approve controlled fetch) → run §5 probes → fill DTA.  
-2. **Impl PR #1 (Slice A):** causal pivots/MSS/structure + truncation tests + mutant — may use synthetic OHLC.  
-3. **Impl PR #2 (Slice B):** HTF alignment only after DTA.  
-
-Still no PROP-03, no broker/VPS, no historical JSON rewrites.
+1. **Slice A impl** with synthetic OHLC + harness + mutants (no PROP-03).  
+2. Owner DTA sample → P1–P6 → **Slice B**.  
+3. CEO-analyst notice issued when communicating status.
 
 ---
 
 ## 12. Stop
 
-**READY FOR CLAUDE M0.5 PLAN REVIEW #127**
+**READY FOR CLAUDE M0.5 PLAN DIFF RECHECK #127**
 
-Review the **exact head commit SHA** of the draft PR on branch `cursor/issue-127-m05-timestamp-plan-3716`. Verdict: APPROVE / REQUEST CHANGES / BLOCK. No implementation in this PR.
+Review the **exact head commit SHA** of draft PR #128. Verdict: APPROVE / REQUEST CHANGES / BLOCK. No implementation in this PR.
