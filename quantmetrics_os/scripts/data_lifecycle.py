@@ -54,6 +54,18 @@ def _safe_read_json(path: Path) -> dict[str, Any] | None:
     return loaded if isinstance(loaded, dict) else None
 
 
+def _delete_allowed_strict(status_payload: dict[str, Any] | None) -> bool:
+    """Only literal JSON boolean true permits deletion permission.
+
+    Accepts ``True`` solely when ``status_payload`` is a dict and
+    ``status_payload.get("delete_allowed") is True``. Strings, numbers,
+    null, missing keys, and non-dicts all deny (fail-closed).
+    """
+    if not isinstance(status_payload, dict):
+        return False
+    return status_payload.get("delete_allowed") is True
+
+
 def _folder_size_bytes(path: Path) -> int:
     total = 0
     for item in path.rglob("*"):
@@ -108,7 +120,7 @@ def _scan_runs(runs_root: Path, qmos_root: Path) -> list[RunScan]:
                 notes = "missing status.json; manual classification required"
             else:
                 status = str(status_payload.get("status", "unknown")).strip() or "unknown"
-                delete_allowed = bool(status_payload.get("delete_allowed", False))
+                delete_allowed = _delete_allowed_strict(status_payload)
                 if status == "unknown":
                     notes = "status.json present but unresolved classification"
 
