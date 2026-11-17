@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run tests
         run: pytest tests -q
@@ -32,3 +32,14 @@ jobs:
 
       - name: Run deterministic demo
         run: python run_demo.py
+
+      # Issue #106 — offline module suites (P1–P3). QuantResearch deferred (V3).
+      - name: Run quantanalytics tests (offline socket guard)
+        run: pytest quantanalytics/tests -q --disable-socket --allow-unix-socket
+
+      - name: Run quantlog tests (offline socket guard)
+        working-directory: quantlog
+        run: pytest tests -q --disable-socket --allow-unix-socket
+
+      - name: Run quantbuild tests (offline socket guard)
+        run: pytest quantbuild/tests -q --disable-socket --allow-unix-socket
