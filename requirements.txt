@@ -4,6 +4,4 @@
 pytest
 python-dotenv>=1.0
 pyyaml>=6.0
-# Needed for root-CI behavioral LiveRunner probes (quantbuild extras not pulled by editable install).
-pydantic>=2.4.0
-filelock>=3.20.3
+# Test/CI-only extras (pydantic, filelock, httpx, pytest-socket) live in requirements-dev.txt (#106).

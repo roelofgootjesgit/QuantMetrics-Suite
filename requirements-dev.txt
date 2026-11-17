@@ -1,0 +1,17 @@
+# Suite-level test/CI dependencies (issue #106).
+# Installed by root GitHub Actions in addition to requirements.txt.
+# Not production runtime packaging for brokers/trading.
+
+# Test runner (also listed in requirements.txt for minimal local use; pin kept here for CI extras).
+pytest>=9.0.3
+
+# LiveRunner / QuantBuild model imports used by root #104 behavioral probes
+# (editable quantbuild install does not pull quantbuild/requirements.txt).
+pydantic>=2.4.0
+filelock>=3.20.3
+
+# QuantBuild news Finnhub wiring (V1: required so test_finnhub_source collects/runs).
+httpx>=0.27
+
+# Offline CI guard (V2): block real TCP/IP sockets in module suites.
+pytest-socket>=0.7.0
