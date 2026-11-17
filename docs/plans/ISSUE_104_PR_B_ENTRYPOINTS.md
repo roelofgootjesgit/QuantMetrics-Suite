@@ -4,7 +4,7 @@
 **Branch:** `cursor/issue-104-pr-b-entrypoints-3716`  
 **Repair round:** 1/2 (TESTS ONLY — T1 blocker)  
 **Repair 1/2 tests head:** see PR #116 head / `git rev-parse HEAD` on this branch  
-**Note:** CI root env lacks `filelock`; E4/m02 stub it (tests only) so LiveRunner import works without changing production deps.  
+**Note:** root `requirements.txt` now includes `pydantic`/`filelock` so LiveRunner behavioral probes import under root CI (no production logic change).  
 **Base:** `main` at/after `4a2ea7eba0cf393b246fc33203a5c956398ed5b0` (PR-A #115 merged)  
 **Brief:** issue #104 — PR-B; tech-lead REQUEST CHANGES on `287440e` (T1: 10/17 mutants SURVIVED)  
 **Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5 / 7 / 9 / 11  
