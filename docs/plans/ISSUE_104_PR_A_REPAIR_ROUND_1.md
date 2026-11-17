@@ -3,7 +3,8 @@
 **PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/115  
 **Branch:** `cursor/issue-104-pr-a-live-gate-3716` (draft)  
 **Prior reviewed head (REQUEST CHANGES):** `ac4fabe3b64948badbc7827fd1a7b4b0d63bed64`  
-**Repair round 1 head:** `199673cd1c3e4dfc96bddbbc6598d6ca57d89e96`  
+**Repair round 1 code head (CI green):** `199673cd1c3e4dfc96bddbbc6598d6ca57d89e96`  
+**Recheck SHA:** PR #115 branch tip at review time (`git rev-parse HEAD` / GitHub PR head)  
 **Verdict target:** Claude CODE recheck PR-A (B1/B2)  
 **Scope:** PR-A only — no PR-B, no brokers, no deployment, no live trading, no merge
 
@@ -123,7 +124,7 @@ Control (unmutated) probes still deny as expected.
 
 ## Next step
 
-Independent Claude CODE recheck on exact head  
-`199673cd1c3e4dfc96bddbbc6598d6ca57d89e96`.
+Independent Claude CODE recheck on the **exact PR #115 head SHA** at review time
+(code repair `199673c` + this evidence MD on the same branch).
 
 If round 2 still fails: **STOP & REDESIGN**.
