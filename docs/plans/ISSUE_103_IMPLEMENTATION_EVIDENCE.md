@@ -4,7 +4,7 @@
 **Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/120  
 **Branch:** `cursor/issue-103-delete-allowed-plan-3716`  
 **PLAN APPROVE head:** `e3e35ec2fb7690e90dd4e397a2a0436871219e99`  
-**Implementation head:** *(CI green SHA after push)*  
+**Implementation head (CI green):** `2edaf8982764ccfaf4c46c088766ed38bfc0c907`  
 **Production path note:** APPROVE text said `orchestrator/data_lifecycle.py`; actual module is `quantmetrics_os/scripts/data_lifecycle.py` (sole copy; matches plan + imports).  
 **Stop line:** **READY FOR CLAUDE CODE REVIEW #103**
 
@@ -50,10 +50,16 @@ pytest tests/test_data_lifecycle_delete_allowed.py -q
 # → 37 passed
 
 pytest tests -q
-# → (see after run)
+# → 156 passed
 
-#104 N/W/mutation + E/mutation + run_demo.py
-# → (see after run)
+pytest tests/test_live_execution_gate_{n,w,mutation}.py -q
+# → 64 passed
+
+pytest tests/test_live_execution_gate_e{,_mutation}.py -q
+# → 43 passed
+
+python run_demo.py
+# → VALIDATION_REQUIRED
 
 git diff quantmetrics_os/reports/
 # → empty (T4)
@@ -65,7 +71,10 @@ git diff quantmetrics_os/reports/
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| *(fill after push)* | | tip | pending |
+| push | [44152527192](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44152527192) | `2edaf89…` | **success** |
+| pull_request | [44152542579](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44152542579) | `2edaf89…` | **success** |
+
+Job on `2edaf89`: **156** / **64** / **43** / demo / **45** / **61** / **247+1 skip**.
 
 ---
 
