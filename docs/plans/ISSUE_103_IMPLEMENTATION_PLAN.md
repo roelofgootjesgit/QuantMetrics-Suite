@@ -1,7 +1,9 @@
 # Issue #103 — Strict `delete_allowed` boolean parse (IMPLEMENTATION PLAN)
 
 **Issue:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/issues/103  
+**Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/120  
 **Branch:** `cursor/issue-103-delete-allowed-plan-3716`  
+**Plan head:** `13c46975856edcafea664004390bba4b1c5fe134`  
 **Base:** `main` @ `b89d50f22e45649daf6dfa648f9120de98b40fad` (post #106 merge)  
 **Mode:** **PLAN ONLY** — no production code in this PR  
 **Tech-lead brief:** issue comment `6929411001`  
