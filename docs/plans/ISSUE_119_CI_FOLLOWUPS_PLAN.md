@@ -456,8 +456,50 @@ validatie van de echte experimentrecords: NOT RUN in CI (artefacten niet in repo
 
 ---
 
-## 11. Stop condition
+## 11. Stop condition (plan stage — superseded)
 
-**READY FOR CLAUDE PLAN DIFF RECHECK #119**
+~~READY FOR CLAUDE PLAN DIFF RECHECK #119~~ — plan approved at `3651948`; Impl-A authorized (PR comment `6958915294`).
 
-Plan-only draft PR #122 (repair round 1 of max 2). No implementation, no merge. Await independent recheck on the **new** exact commit SHA and owner PLAN APPROVE before any Impl-A / Impl-B coding.
+---
+
+## 12. Impl-A evidence (N1 + V4 + deps) — CODE REVIEW
+
+**Authorized by:** tech-lead comment `6958915294` on PR #122 (Claude APPROVE PLAN → Impl-A ONLY).  
+**Scope kept:** no QuantResearch / hyp003 / experiment.json changes.  
+`git diff main -- quantresearch/pipelines/hyp003_preregistration.json` → **empty**.
+
+### Changed files (Impl-A)
+
+| File | Change |
+|---|---|
+| `quantbuild/src/quantbuild/quantlog_repo.py` | Precedence: env → canonical(suite-root) → sibling |
+| `quantbuild/tests/test_quantlog_repo.py` | Sibling + env-wins-over-sibling tests |
+| `quantbuild/tests/test_quantlog_desk_grade_validation.py` | Fail (not skip) when repo resolves but import fails |
+| `tests/test_ci_workflow_preservation.py` | Exact allowlist; `\|\| exit 0`; reject `if:` / `shell:`; V4-M01–M09 |
+| `requirements.txt` | Remove pytest (runtime editables retained) |
+| `requirements-dev.txt` | Sole `pytest>=9.0.3`; dual-install note |
+
+### Commands / results (local agent, Python 3.12.3; root CI target 3.11)
+
+| Command | Result |
+|---|---|
+| `pytest quantbuild/tests/test_quantlog_repo.py quantbuild/tests/test_quantlog_desk_grade_validation.py -v` (no QUANTLOG_*/suite-root env) | **6 passed** (desk-grade **PASSED**, not skipped) |
+| `pytest tests/test_ci_workflow_preservation.py -v` | **16 passed** (incl. V4-M01–M09) |
+| `pytest tests -q` | **165 passed** |
+| #104 N/W/mutation | **64 passed** |
+| #104 E/mutation | **43 passed** |
+| `python run_demo.py` | Verdict `VALIDATION_REQUIRED` |
+| `pytest quantanalytics/tests -q --disable-socket --allow-unix-socket` | **45 passed** |
+| `(cd quantlog && pytest tests -q --disable-socket --allow-unix-socket)` | **61 passed** |
+| `pytest quantbuild/tests -q --disable-socket --allow-unix-socket` | **250 passed** |
+| QuantResearch suite / hyp003 edits | **NOT RUN / not changed** (Impl-B) |
+
+### Deps proof (O4)
+
+- `requirements.txt` contains `-e ./quantbuild`, `-e ./quantlog`, `-e ./quantanalytics`; **no** `pytest` package line.
+- `requirements-dev.txt` pins `pytest>=9.0.3`.
+- CI workflow still: `pip install -r requirements.txt -r requirements-dev.txt`.
+
+### Stop
+
+**READY FOR CLAUDE CODE REVIEW IMPL-A #119**

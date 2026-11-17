@@ -1,7 +1,9 @@
-"""Issue #106 — root CI preservation (V4) + A1/N2 hardening.
+"""Issue #106 / #119 — root CI preservation (V4) + A1/N2 hardening.
 
 A1: reject job/step continue-on-error and soft-fail shells on mandatory runs.
 N2: pytest-socket is a hard requirement (no importorskip).
+#119 Impl-A: exact allowlist for mandatory runs; reject job/step if: and
+shell: overrides on mandatory steps; kill V4-M01–M09 mutants.
 """
 from __future__ import annotations
 
@@ -14,19 +16,21 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
-REQUIRED_RUN_SNIPPETS = (
+# Exact step `run` strings (strip) for mandatory #104 + root + demo (#119 V4).
+REQUIRED_EXACT_RUNS = (
     "pytest tests -q",
     "pytest tests/test_live_execution_gate_n.py tests/test_live_execution_gate_w.py tests/test_live_execution_gate_mutation.py -q",
     "pytest tests/test_live_execution_gate_e.py tests/test_live_execution_gate_e_mutation.py -q",
     "python run_demo.py",
 )
 
-# Soft-fail / fail-open shell patterns banned in mandatory CI run scripts (A1).
+# Soft-fail / fail-open shell patterns banned in mandatory CI run scripts (A1 + #119).
 SOFT_FAIL_PATTERNS = (
     re.compile(r"\|\|\s*true\b"),
     re.compile(r"\|\|\s*:"),
     re.compile(r";\s*true\b"),
     re.compile(r"\bset\s+\+e\b"),
+    re.compile(r"\|\|\s*exit\s+0\b"),
 )
 
 
@@ -67,7 +71,7 @@ def _assert_no_continue_on_error(data: dict) -> None:
 
 
 def _assert_no_soft_fail_in_runs(data: dict) -> None:
-    """A1: reject || true / || : / ; true / set +e in any run script."""
+    """A1/#119: reject || true / || : / ; true / set +e / || exit 0 in any run script."""
     for step in _all_steps(data):
         run = str(step.get("run") or "")
         if not run.strip():
@@ -80,9 +84,32 @@ def _assert_no_soft_fail_in_runs(data: dict) -> None:
 
 
 def _assert_required_commands_present(data: dict) -> None:
-    runs = [str(s.get("run") or "") for s in _all_steps(data)]
-    for snippet in REQUIRED_RUN_SNIPPETS:
-        assert any(snippet in run for run in runs), f"missing required CI command: {snippet!r}"
+    """#119 V4: each mandatory command must appear as an exact step run (strip)."""
+    runs = [str(s.get("run") or "").strip() for s in _all_steps(data)]
+    for required in REQUIRED_EXACT_RUNS:
+        assert required in runs, f"missing required CI command (exact): {required!r}"
+
+
+def _assert_no_if_on_jobs_or_steps(data: dict) -> None:
+    """#119 O3: any job/step if: is forbidden (blocks if: false soft-skip)."""
+    for job_name, job in _jobs(data).items():
+        assert "if" not in job, f"if: not allowed on CI job: {job_name}"
+        for step in job.get("steps") or []:
+            assert "if" not in step, (
+                f"if: not allowed on CI step: {step.get('name')!r} (job={job_name})"
+            )
+
+
+def _assert_no_shell_on_mandatory_steps(data: dict) -> None:
+    """#119 O3: shell: override forbidden on steps carrying exact allowlisted runs."""
+    allow = set(REQUIRED_EXACT_RUNS)
+    for step in _all_steps(data):
+        run = str(step.get("run") or "").strip()
+        if run not in allow:
+            continue
+        assert "shell" not in step, (
+            f"shell: override not allowed on mandatory step: {step.get('name')!r}"
+        )
 
 
 def _assert_module_socket_guards(data: dict) -> None:
@@ -99,19 +126,22 @@ def _assert_module_socket_guards(data: dict) -> None:
     ]
     assert ql, "quantlog step must use working-directory: quantlog with socket guard"
     joined = "\n".join(runs)
+    # Impl-B will replace this ban with a positive QR requirement; keep for Impl-A.
     assert "quantresearch" not in joined.lower()
 
 
 def assert_workflow_fail_closed(data: dict) -> None:
-    """Full fail-closed CI contract used by live tests and A1 mutations."""
+    """Full fail-closed CI contract used by live tests and V4/A1 mutations."""
     _assert_required_commands_present(data)
     _assert_no_continue_on_error(data)
     _assert_no_soft_fail_in_runs(data)
+    _assert_no_if_on_jobs_or_steps(data)
+    _assert_no_shell_on_mandatory_steps(data)
     _assert_module_socket_guards(data)
 
 
 def test_v4_ci_preserves_root_and_issue_104_commands():
-    """Parse ci.yml: required #104 + demo remain; no soft-fail / continue-on-error."""
+    """Parse ci.yml: required #104 + demo remain; no soft-fail / continue-on-error / if / shell."""
     assert_workflow_fail_closed(_load_workflow())
 
 
@@ -144,14 +174,13 @@ def test_a1_m01_demo_or_true_soft_fail_killed():
     mutated = text.replace("python run_demo.py", "python run_demo.py || true", 1)
     assert "|| true" in mutated
     data = _load_workflow_text(mutated)
-    with pytest.raises(AssertionError, match="soft-fail|\\|\\|"):
+    with pytest.raises(AssertionError, match="missing required CI command|soft-fail|\\|\\|"):
         assert_workflow_fail_closed(data)
 
 
 def test_a1_m02_job_continue_on_error_killed():
     """Mutant: job-level continue-on-error: true — previously SURVIVED; must now fail."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    # Insert under the primary job key.
     needle = "  test-and-demo:\n    runs-on: ubuntu-latest\n"
     repl = "  test-and-demo:\n    continue-on-error: true\n    runs-on: ubuntu-latest\n"
     assert needle in text
@@ -183,4 +212,111 @@ def test_a1_m04_removed_socket_guard_killed():
     assert "--disable-socket" not in mutated
     data = _load_workflow_text(mutated)
     with pytest.raises(AssertionError):
+        assert_workflow_fail_closed(data)
+
+
+# --- #119 V4-M01–M09 mutation proofs ---
+
+
+def test_v4_m01_pytest_or_exit_0_killed():
+    """V4-M01: `pytest tests -q || exit 0` must fail exact allowlist and/or soft-fail denylist."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace("pytest tests -q", "pytest tests -q || exit 0", 1)
+    assert "|| exit 0" in mutated
+    data = _load_workflow_text(mutated)
+    with pytest.raises(AssertionError, match="missing required CI command|soft-fail|\\|\\|"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m02_demo_or_exit_0_killed():
+    """V4-M02: `python run_demo.py || exit 0` must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace("python run_demo.py", "python run_demo.py || exit 0", 1)
+    assert "|| exit 0" in mutated
+    data = _load_workflow_text(mutated)
+    with pytest.raises(AssertionError, match="missing required CI command|soft-fail|\\|\\|"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m03_job_continue_on_error_killed():
+    """V4-M03: job continue-on-error: true must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "  test-and-demo:\n    runs-on: ubuntu-latest\n"
+    repl = "  test-and-demo:\n    continue-on-error: true\n    runs-on: ubuntu-latest\n"
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match="continue-on-error"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m04_step_continue_on_error_demo_killed():
+    """V4-M04: step continue-on-error on demo must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "      - name: Run deterministic demo\n        run: python run_demo.py\n"
+    repl = (
+        "      - name: Run deterministic demo\n"
+        "        continue-on-error: true\n"
+        "        run: python run_demo.py\n"
+    )
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match="continue-on-error"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m05_drop_nw_gate_killed():
+    """V4-M05: drop N/W gate command must fail exact allowlist."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    snippet = (
+        "pytest tests/test_live_execution_gate_n.py "
+        "tests/test_live_execution_gate_w.py "
+        "tests/test_live_execution_gate_mutation.py -q"
+    )
+    mutated = text.replace(snippet, "pytest tests/test_live_execution_gate_n.py -q  # mutated-drop-nw", 1)
+    assert snippet not in mutated
+    data = _load_workflow_text(mutated)
+    with pytest.raises(AssertionError, match="missing required CI command"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m06_strip_socket_guard_killed():
+    """V4-M06: strip --disable-socket from module steps must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    mutated = text.replace(" --disable-socket --allow-unix-socket", "", 3)
+    assert "--disable-socket" not in mutated
+    data = _load_workflow_text(mutated)
+    with pytest.raises(AssertionError):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m07_step_if_false_killed():
+    """V4-M07: mandatory step `if: false` must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "      - name: Run tests\n        run: pytest tests -q\n"
+    repl = "      - name: Run tests\n        if: false\n        run: pytest tests -q\n"
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match=r"\bif:"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m08_job_if_false_killed():
+    """V4-M08: job `if: false` must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "  test-and-demo:\n    runs-on: ubuntu-latest\n"
+    repl = "  test-and-demo:\n    if: false\n    runs-on: ubuntu-latest\n"
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match=r"\bif:"):
+        assert_workflow_fail_closed(data)
+
+
+def test_v4_m09_shell_override_on_mandatory_killed():
+    """V4-M09: shell: override on mandatory step must fail."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    needle = "      - name: Run tests\n        run: pytest tests -q\n"
+    repl = "      - name: Run tests\n        shell: bash {0}\n        run: pytest tests -q\n"
+    assert needle in text
+    data = _load_workflow_text(text.replace(needle, repl, 1))
+    with pytest.raises(AssertionError, match="shell:"):
         assert_workflow_fail_closed(data)

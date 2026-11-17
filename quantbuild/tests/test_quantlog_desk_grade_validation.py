@@ -106,12 +106,20 @@ def _write_trade_action_terminal(
 
 class TestDeskGradeQuantlogValidation(unittest.TestCase):
     def test_signal_evaluated_desk_grade_passes_quantlog_validator(self) -> None:
-        validate_path, prefix = _import_quantlog_validate_path()
-        if validate_path is None:
+        # #119 N1: skip only when QuantLog truly absent; fail (not skip) if path
+        # resolves but import fails (silent skip was the monorepo defect).
+        repo = resolve_quantlog_repo_path()
+        if repo is None:
             self.skipTest(
-                "QuantLog repo or import missing — set QUANTLOG_REPO_PATH or clone "
-                "quantlog beside quantbuild, and ensure quantlog dependencies are installed"
+                "QuantLog repo missing — set QUANTLOG_REPO_PATH / QUANTLOG_ROOT or "
+                "clone quantlog beside quantbuild"
             )
+        validate_path, prefix = _import_quantlog_validate_path()
+        self.assertIsNotNone(
+            validate_path,
+            f"QuantLog import failed despite resolved repo at {repo}; "
+            "ensure quantlog is installed / importable (no silent skip)",
+        )
         try:
             poll = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
             long_ctx = {
