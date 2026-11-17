@@ -1,10 +1,12 @@
 # Issue #106 — PROP-00 CI: module coverage + PR template (PLAN)
 
 **Issue:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/issues/106  
+**Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/118  
 **Branch:** `cursor/issue-106-ci-coverage-plan-3716`  
+**Plan head:** `4c4c90ff79f0934587e9a5b04ac61255fb3c8465` (tip may add docs-only pins)  
 **Base:** `main` @ `4f10151e1a33a94c1c29bf48c543e11eb9ffc06d` (post PR #116 merge)  
 **Mode:** PLAN ONLY — no production logic, no CI wiring yet, no merge  
-**Tech-lead brief:** issue comment `6955519929` (2026-11-17)  
+**Tech-lead brief:** issue comment `6955519929` (2026-11-17 Europe/Amsterdam)  
 **Stop line:** **READY FOR CLAUDE PLAN REVIEW #106**
 
 ---
