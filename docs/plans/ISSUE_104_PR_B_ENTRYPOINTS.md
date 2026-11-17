@@ -3,8 +3,8 @@
 **PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/116 (draft)  
 **Branch:** `cursor/issue-104-pr-b-entrypoints-3716`  
 **Repair round:** 1/2 (TESTS ONLY — T1 blocker)  
-**Repair 1/2 tests head:** see PR #116 head / `git rev-parse HEAD` on this branch  
-**Note:** root `requirements.txt` now includes `pydantic`/`filelock` so LiveRunner behavioral probes import under root CI (no production logic change).  
+**Repair 1/2 head (CI green):** `4b2c08db2e1d741e23d670fbd4944e150285ee57`
+**Note:** root `requirements.txt` includes `pydantic`/`filelock` for LiveRunner behavioral probes under root CI (no production logic change).
 **Base:** `main` at/after `4a2ea7eba0cf393b246fc33203a5c956398ed5b0` (PR-A #115 merged)  
 **Brief:** issue #104 — PR-B; tech-lead REQUEST CHANGES on `287440e` (T1: 10/17 mutants SURVIVED)  
 **Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5 / 7 / 9 / 11  
@@ -77,16 +77,17 @@ python run_demo.py
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| push (repair 1/2 + filelock stub) | *(filled after green CI)* | tip SHA | pending |
+| push | [44127686349](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44127686349) | `4b2c08d…` | **success** |
+| pull_request | [44127703164](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44127703164) | `4b2c08d…` | **success** |
 
 Job `test-and-demo` expected steps:
 
-| Step | Local result |
-|---|---|
-| Run tests (`pytest tests -q`) | **112 passed** |
-| Run issue #104 N/W/mutation | **64 passed** |
-| Run issue #104 PR-B E + mutation | **43 passed** |
-| Run deterministic demo | `VALIDATION_REQUIRED` |
+| Step | Local | CI (`4b2c08d`) |
+|---|---|---|
+| Run tests (`pytest tests -q`) | **112 passed** | **112 passed** |
+| Run issue #104 N/W/mutation | **64 passed** | **64 passed** |
+| Run issue #104 PR-B E + mutation | **43 passed** | **43 passed** |
+| Run deterministic demo | `VALIDATION_REQUIRED` | `VALIDATION_REQUIRED` |
 
 ---
 
