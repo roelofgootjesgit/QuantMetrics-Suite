@@ -130,9 +130,12 @@ def test_e3_bridge_openapi_broker_init_denied(deny_env, monkeypatch):
 
 
 def test_e4_live_runner_real_without_auth(deny_env, monkeypatch):
-    """E4: LiveRunner(dry_run=False).run without auth denies before connect."""
+    """E4: invoke real LiveRunner.run — ORDERS deny before broker.connect."""
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    # AUTH missing
+
+    from src.quantbuild.execution.live_runner import LiveRunner
 
     connects: list[int] = []
 
@@ -147,32 +150,18 @@ def test_e4_live_runner_real_without_auth(deny_env, monkeypatch):
         def disconnect(self):
             return None
 
-    # Exercise the ORDERS preflight block the same way LiveRunner.run does,
-    # without importing the full LiveRunner module graph.
-    from src.quantbuild.execution.live_execution_preflight import (
-        broker_fields_from_cfg,
-        preflight_live_execution,
-    )
+    # Behavioral: construct via __new__ to avoid heavy __init__, then call real run().
+    runner = object.__new__(LiveRunner)
+    runner.cfg = _minimal_cfg(mock_mode=True, account_id="12345678")
+    runner.dry_run = False
+    runner._account_id = "12345678"
+    runner.broker = FakeBroker()
 
-    cfg = _minimal_cfg(mock_mode=True)
-    provider, environment, account_id = broker_fields_from_cfg(cfg)
-    with pytest.raises((LiveExecutionDenied, RuntimeError)):
-        preflight_live_execution(
-            provider=provider,
-            environment=environment,
-            account_id=account_id,
-            intent="ORDERS",
-        )
-    # Behavioral: a runner that checked ORDERS first would not connect
-    broker = FakeBroker()
+    with pytest.raises((LiveExecutionDenied, RuntimeError)) as exc:
+        runner.run()
+    msg = str(exc.value).lower()
+    assert "execution_not_authorized" in msg or "liveexecutiondenied" in type(exc.value).__name__.lower()
     assert connects == []
-    # Source-level presence of preflight in live_runner.run
-    src = (ROOT / "quantbuild/src/quantbuild/execution/live_runner.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'intent="ORDERS"' in src or "intent='ORDERS'" in src
-    assert "preflight_live_execution" in src
-    _ = broker  # silence lint
 
 
 def test_e5_launch_live_safe_preflight_no_subprocess(deny_env, monkeypatch, tmp_path):
@@ -376,3 +365,296 @@ def test_e_diagnose_non_mock_denied(deny_env, monkeypatch, tmp_path):
     with pytest.raises((LiveExecutionDenied, RuntimeError, SystemExit)):
         mod.main()
     assert ctor == []
+
+
+def test_e_oanda_create_broker_denied_zero_ctor(deny_env, monkeypatch):
+    """Oanda create_broker without SESSION allowlist — deny; zero OandaBroker ctor."""
+    from src.quantbuild.execution import broker_factory as bf
+
+    monkeypatch.setattr(bf, "validate_suite_layout", lambda: {})
+    ctor: list[int] = []
+
+    class Boom:
+        def __init__(self, *a, **k):
+            ctor.append(1)
+            raise AssertionError("OandaBroker must not construct")
+
+    monkeypatch.setattr(bf, "OandaBroker", Boom)
+    cfg = {
+        "broker": {
+            "provider": "oanda",
+            "environment": "practice",
+            "account_id": "001-practice",
+            "token": "tok",
+        }
+    }
+    with pytest.raises((LiveExecutionDenied, RuntimeError)):
+        bf.create_broker(cfg)
+    assert ctor == []
+
+
+@pytest.mark.parametrize("provider_cfg", [
+    {"provider": "ctrader", "environment": "demo", "account_id": "12345678", "mock_mode": False},
+    {"provider": "oanda", "environment": "practice", "account_id": "001", "token": "tok"},
+])
+def test_e_validate_suite_layout_mandatory_before_broker(deny_env, monkeypatch, provider_cfg):
+    """validate_suite_layout failure denies before any broker constructor."""
+    from src.quantbuild.execution import broker_factory as bf
+    from src.quantbuild.suite_layout import SuiteLayoutError
+
+    layout_calls: list[int] = []
+    ctor: list[int] = []
+
+    def boom_layout():
+        layout_calls.append(1)
+        raise SuiteLayoutError("layout_invalid_for_test")
+
+    class Boom:
+        def __init__(self, *a, **k):
+            ctor.append(1)
+            raise AssertionError("broker must not construct")
+
+    monkeypatch.setattr(bf, "validate_suite_layout", boom_layout)
+    monkeypatch.setattr(bf, "CTraderBroker", Boom)
+    monkeypatch.setattr(bf, "OandaBroker", Boom)
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", provider_cfg["account_id"])
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", provider_cfg["environment"])
+    monkeypatch.setenv("QUANTMETRICS_EXECUTION_AUTHORIZED", "1")
+
+    with pytest.raises(SuiteLayoutError):
+        bf.create_broker({"broker": provider_cfg, "symbol": "XAUUSD"})
+    assert layout_calls == [1]
+    assert ctor == []
+
+
+def test_e_qb_ctrader_smoke_non_mock_denied(deny_env, monkeypatch, tmp_path):
+    """QuantBuild ctrader_smoke non-mock without ORDERS auth — no create_broker."""
+    script = ROOT / "quantbuild/scripts/ctrader_smoke.py"
+    spec = importlib.util.spec_from_file_location("qb_smoke_e", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    cfg = _minimal_cfg(mock_mode=False, account_id="12345678")
+    monkeypatch.setattr(mod, "load_config", lambda p: cfg)
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    # AUTH missing
+
+    ctor: list[int] = []
+
+    def boom_create(c):
+        ctor.append(1)
+        raise AssertionError("create_broker must not run")
+
+    monkeypatch.setattr(mod, "create_broker", boom_create)
+    monkeypatch.setattr(sys, "argv", ["ctrader_smoke.py", "--config", "x.yaml"])
+    with pytest.raises((LiveExecutionDenied, RuntimeError, SystemExit)):
+        mod.main()
+    assert ctor == []
+
+
+def test_e_bridge_ctrader_smoke_openapi_denied(deny_env, monkeypatch, tmp_path):
+    """Bridge ctrader_smoke openapi without ORDERS — no CTraderBroker ctor."""
+    script = ROOT / "quantbridge/scripts/ctrader_smoke.py"
+    spec = importlib.util.spec_from_file_location("bridge_smoke_e", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "load_local_env", lambda: None)
+    monkeypatch.setattr(
+        mod,
+        "load_config",
+        lambda p: {
+            "broker": {"environment": "demo", "mode": "openapi", "account_id": "12345678"},
+            "symbol": {"internal": "XAUUSD"},
+            "execution": {},
+        },
+    )
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    monkeypatch.setenv("CTRADER_ACCOUNT_ID", "12345678")
+    monkeypatch.setenv("CTRADER_ACCESS_TOKEN", "t" * 40)
+
+    ctor: list[int] = []
+
+    class Boom:
+        def __init__(self, *a, **k):
+            ctor.append(1)
+            raise AssertionError("CTraderBroker must not construct")
+
+    monkeypatch.setattr(mod, "CTraderBroker", Boom)
+    monkeypatch.setattr(sys, "argv", ["ctrader_smoke.py", "--mode", "openapi", "--config", "x.yaml"])
+    with pytest.raises((LiveExecutionDenied, RuntimeError, SystemExit)):
+        mod.main()
+    assert ctor == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "export QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "QUANTMETRICS_EXECUTION_AUTHORIZED = 1",
+    ],
+)
+def test_e_bridge_smoke_dotenv_gate_key_denied(deny_env, monkeypatch, tmp_path, line):
+    """Bridge smoke load_local_env denies dotenv/export gate-key variants."""
+    script = ROOT / "quantbridge/scripts/ctrader_smoke.py"
+    # Point ROOT used by script via chdir + env file in tmp — import and call loader with patched ROOT
+    spec = importlib.util.spec_from_file_location("bridge_smoke_dotenv", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    (tmp_path / "local.env").write_text(line + "\nCTRADER_ACCOUNT_ID=12345678\n", encoding="utf-8")
+    with pytest.raises(LiveExecutionDenied):
+        mod.load_local_env()
+
+
+def test_e_order_lifecycle_openapi_denied(deny_env, monkeypatch):
+    """run_order_lifecycle_check openapi without ORDERS — no CTraderBroker."""
+    script = ROOT / "quantbridge/scripts/run_order_lifecycle_check.py"
+    spec = importlib.util.spec_from_file_location("lifecycle_e", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "load_env_files", lambda: None)
+    monkeypatch.setattr(
+        mod,
+        "load_config",
+        lambda p: {
+            "broker": {"environment": "demo", "mode": "openapi", "account_id": "12345678"},
+            "symbol": {"internal": "XAUUSD"},
+            "execution": {"units": 1.0},
+        },
+    )
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    monkeypatch.setenv("CTRADER_ACCOUNT_ID", "12345678")
+    monkeypatch.setenv("CTRADER_ACCESS_TOKEN", "t" * 40)
+
+    ctor: list[int] = []
+
+    class Boom:
+        def __init__(self, *a, **k):
+            ctor.append(1)
+            raise AssertionError("must not construct")
+
+    monkeypatch.setattr(mod, "CTraderBroker", Boom)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_order_lifecycle_check.py", "--mode", "openapi", "--config", "x.yaml"],
+    )
+    with pytest.raises((LiveExecutionDenied, RuntimeError, SystemExit)):
+        mod.main()
+    assert ctor == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export QUANTMETRICS_ALLOWED_ACCOUNT_IDS=12345678",
+        "QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+    ],
+)
+def test_e_lifecycle_dotenv_gate_key_denied(deny_env, monkeypatch, tmp_path, line):
+    script = ROOT / "quantbridge/scripts/run_order_lifecycle_check.py"
+    spec = importlib.util.spec_from_file_location("lifecycle_dotenv", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text(line + "\n", encoding="utf-8")
+    with pytest.raises(LiveExecutionDenied):
+        mod.load_env_files()
+
+
+def test_e_runtime_control_openapi_orders_denied(deny_env, monkeypatch):
+    """run_runtime_control openapi + close_on_failsafe without ORDERS — no broker."""
+    script = ROOT / "quantbridge/scripts/run_runtime_control.py"
+    spec = importlib.util.spec_from_file_location("runtime_e", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "load_env_files", lambda: None)
+    monkeypatch.setattr(
+        mod,
+        "load_config",
+        lambda p: {
+            "broker": {"environment": "demo", "mode": "openapi", "account_id": "12345678"},
+            "symbol": {"internal": "XAUUSD"},
+        },
+    )
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    monkeypatch.setenv("CTRADER_ACCOUNT_ID", "12345678")
+    monkeypatch.setenv("CTRADER_ACCESS_TOKEN", "t" * 40)
+
+    ctor: list[int] = []
+
+    class Boom:
+        def __init__(self, *a, **k):
+            ctor.append(1)
+            raise AssertionError("must not construct")
+
+    monkeypatch.setattr(mod, "CTraderBroker", Boom)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_runtime_control.py", "--mode", "openapi", "--config", "x.yaml", "--max-iterations", "1"],
+    )
+    with pytest.raises((LiveExecutionDenied, RuntimeError, SystemExit)):
+        mod.main()
+    assert ctor == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS=demo",
+    ],
+)
+def test_e_runtime_dotenv_gate_key_denied(deny_env, monkeypatch, tmp_path, line):
+    script = ROOT / "quantbridge/scripts/run_runtime_control.py"
+    spec = importlib.util.spec_from_file_location("runtime_dotenv", script)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    (tmp_path / "local.env").write_text(line + "\n", encoding="utf-8")
+    with pytest.raises(LiveExecutionDenied):
+        mod.load_env_files()
+
+
+def test_e_qb_init_real_bridge_session_denied(deny_env, monkeypatch, tmp_path):
+    """QB CTraderBroker._init_real_bridge SESSION deny before OpenAPI construction."""
+    from src.quantbuild.execution.broker_ctrader import CTraderBroker
+
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
+    monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
+    # Missing AUTH is OK for SESSION — use missing account instead
+    monkeypatch.delenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", raising=False)
+
+    bridge_src = tmp_path / "quantbridge" / "src"
+    bridge_src.mkdir(parents=True)
+    monkeypatch.setenv("QUANTBRIDGE_SRC_PATH", str(bridge_src))
+    # Make path exist so _init_real_bridge enters the loop
+    (bridge_src / "quantbridge").mkdir()
+    (bridge_src / "quantbridge" / "__init__.py").write_text("", encoding="utf-8")
+
+    broker = CTraderBroker(
+        account_id="12345678",
+        access_token="t" * 40,
+        environment="demo",
+        mock_mode=False,
+    )
+    monkeypatch.setattr(broker, "_hydrate_credentials_from_dotenv", lambda root: None)
+    with pytest.raises((LiveExecutionDenied, RuntimeError)):
+        broker._init_real_bridge()
