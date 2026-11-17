@@ -1,8 +1,11 @@
-# Suite-level test/CI dependencies (issue #106).
+# Suite-level test/CI dependencies (issue #106 / #119 O4).
 # Installed by root GitHub Actions in addition to requirements.txt.
 # Not production runtime packaging for brokers/trading.
+#
+# Runtime-only (`pip install -r requirements.txt`) installs editables without pytest.
+# Contributors / CI: `pip install -r requirements.txt -r requirements-dev.txt`.
 
-# Test runner (also listed in requirements.txt for minimal local use; pin kept here for CI extras).
+# Test runner — sole suite pin (dev/CI only).
 pytest>=9.0.3
 
 # LiveRunner / QuantBuild model imports used by root #104 behavioral probes

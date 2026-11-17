@@ -1,7 +1,8 @@
 -e ./quantbuild
 -e ./quantlog
 -e ./quantanalytics
-pytest
 python-dotenv>=1.0
 pyyaml>=6.0
-# Test/CI-only extras (pydantic, filelock, httpx, pytest-socket) live in requirements-dev.txt (#106).
+# Test/CI-only extras (pytest, pydantic, filelock, httpx, pytest-socket) live in
+# requirements-dev.txt (#106 / #119 O4). Runtime-only: pip install -r requirements.txt
+# still installs the editables above; CI uses requirements.txt + requirements-dev.txt.
