@@ -1,7 +1,8 @@
 # Issue #104 PR-B — Entrypoint fail-closed preflights
 
-**PR:** (draft — see GitHub PR for this branch)  
+**PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/116 (draft)  
 **Branch:** `cursor/issue-104-pr-b-entrypoints-3716`  
+**Head:** `62941e4541b943a68faab4e90936e67c28d90ec8`  
 **Base:** `main` at/after `4a2ea7eba0cf393b246fc33203a5c956398ed5b0` (PR-A #115 merged)  
 **Brief:** issue #104 comment PR-B implementation brief  
 **Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5/7/9/11  
@@ -48,6 +49,14 @@ pytest tests/test_live_execution_gate_n.py tests/test_live_execution_gate_w.py t
 python run_demo.py
 # → Verdict: VALIDATION_REQUIRED (0 errors)
 ```
+
+## CI evidence
+
+| Trigger | Run | Head | Conclusion |
+|---|---|---|---|
+| pull_request | [44121121750](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44121121750) | `62941e4…` | **success** |
+
+Job `test-and-demo`: root tests + PR-A gate suite + PR-B E suite + demo — all green.
 
 ---
 
