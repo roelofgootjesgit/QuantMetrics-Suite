@@ -19,6 +19,39 @@ from quantbridge.safety.live_execution_gate import GATE_ENV_KEYS, LiveExecutionD
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _stub_filelock_if_missing() -> None:
+    """Root CI installs suite requirements without quantbuild extras (filelock)."""
+    try:
+        import filelock  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+    stub = ModuleType("filelock")
+
+    class FileLock:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def acquire(self, *a, **k):
+            return True
+
+        def release(self, *a, **k):
+            return None
+
+    class Timeout(Exception):
+        pass
+
+    stub.FileLock = FileLock
+    stub.Timeout = Timeout
+    sys.modules["filelock"] = stub
+
+
 @pytest.fixture
 def deny_env(monkeypatch):
     for key in GATE_ENV_KEYS:
@@ -134,6 +167,7 @@ def test_e4_live_runner_real_without_auth(deny_env, monkeypatch):
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
     # AUTH missing
+    _stub_filelock_if_missing()
 
     from src.quantbuild.execution.live_runner import LiveRunner
 

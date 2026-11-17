@@ -171,12 +171,26 @@ def test_m02_live_runner_orders_removed_killed(tmp_path):
     lr = qb / "src/quantbuild/execution/live_runner.py"
     text = lr.read_text(encoding="utf-8")
     lr.write_text(text.replace("if not self.dry_run:", "if False:  # m02", 1), encoding="utf-8")
+    # Avoid root-CI missing filelock via quantlog_emitter import chain.
+    (qb / "src/quantbuild/execution/quantlog_emitter.py").write_text(
+        "class QuantLogEmitter:\n  def __init__(self, *a, **k): pass\n",
+        encoding="utf-8",
+    )
     code = textwrap.dedent(
         """
-        import os
+        import os, sys, types
         os.environ.pop('QUANTMETRICS_EXECUTION_AUTHORIZED', None)
         os.environ['QUANTMETRICS_ALLOWED_ACCOUNT_IDS']='12345678'
         os.environ['QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS']='demo'
+        if 'filelock' not in sys.modules:
+            fl = types.ModuleType('filelock')
+            class FileLock:
+                def __init__(self, *a, **k): pass
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            class Timeout(Exception): pass
+            fl.FileLock = FileLock; fl.Timeout = Timeout
+            sys.modules['filelock'] = fl
         from src.quantbuild.execution.live_runner import LiveRunner
         connects=[]
         class B:
