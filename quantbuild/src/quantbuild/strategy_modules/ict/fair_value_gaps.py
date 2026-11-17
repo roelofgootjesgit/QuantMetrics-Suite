@@ -1,7 +1,20 @@
-"""Fair Value Gaps (FVG) – ICT price imbalance."""
-import pandas as pd
-import numpy as np
+"""Fair Value Gaps (FVG) – confirmation on the third candle close.
+
+M0.5 / issue #127: the event flag is written on the **third** candle of the
+3-bar pattern (confirmation bar), never back-written onto the middle/origin bar.
+
+Entry timing note (ADR-001 M3): confirmation is evaluated at the **close** of
+that third candle, matching today's hub close-fill convention. If M3 later
+moves the shared fill hook to **next-open**, SQE entries that consume FVG must
+shift one bar forward so close-confirmation and next-open fill do not silently
+mix.
+"""
+from __future__ import annotations
+
 from typing import Dict
+
+import numpy as np
+import pandas as pd
 
 from src.quantbuild.strategy_modules.base import BaseModule
 
@@ -13,13 +26,13 @@ class FairValueGapModule(BaseModule):
 
     @property
     def description(self) -> str:
-        return "ICT price imbalances – gaps that tend to fill"
+        return "ICT price imbalances – gaps confirmed on third candle close"
 
     def get_config_schema(self) -> Dict:
         return {
             "fields": [
                 {"name": "min_gap_pct", "label": "Min Gap %", "type": "number", "default": 0.5, "min": 0.1, "max": 2.0},
-                {"name": "validity_candles", "label": "Validity Candles", "type": "number", "default": 50, "min": 10, "max": 100},
+                {"name": "validity_candles", "label": "Validity Candles", "type": "number", "default": 50, "min": 1, "max": 100},
                 {
                     "name": "fvg_quality_cap_pct",
                     "label": "FVG quality cap % (gap ratio at this size → quality 1.0)",
@@ -34,53 +47,47 @@ class FairValueGapModule(BaseModule):
     def calculate(self, data: pd.DataFrame, config: Dict) -> pd.DataFrame:
         df = data.copy()
         min_gap = config.get("min_gap_pct", 0.5) / 100.0
-        validity = config.get("validity_candles", 50)
+        validity = int(config.get("validity_candles", 50))
         cap_ratio = max(float(config.get("fvg_quality_cap_pct", 1.5)) / 100.0, 1e-9)
 
         high = df["high"].values
         low = df["low"].values
         n = len(df)
 
-        prev_prev_high = np.empty(n)
-        prev_prev_high[:2] = np.nan
-        prev_prev_high[2:] = high[:-2]
-
-        bull_gap = (low - prev_prev_high) / np.where(prev_prev_high != 0, prev_prev_high, np.nan)
-        bull_mask = (low > prev_prev_high) & (bull_gap >= min_gap)
         bullish_fvg = np.zeros(n, dtype=bool)
-        bullish_fvg[1:-1] = bull_mask[2:]
-
-        prev_prev_low = np.empty(n)
-        prev_prev_low[:2] = np.nan
-        prev_prev_low[2:] = low[:-2]
-
-        bear_gap = (prev_prev_low - high) / np.where(prev_prev_low != 0, prev_prev_low, np.nan)
-        bear_mask = (high < prev_prev_low) & (bear_gap >= min_gap)
         bearish_fvg = np.zeros(n, dtype=bool)
-        bearish_fvg[1:-1] = bear_mask[2:]
+        bull_qual = np.zeros(n, dtype=np.float64)
+        bear_qual = np.zeros(n, dtype=np.float64)
 
-        # Quality 0–1: gap size vs cap (same validity window as in_*_fvg)
-        bull_qual_form = np.zeros(n, dtype=np.float64)
-        bear_qual_form = np.zeros(n, dtype=np.float64)
-        for j in range(1, n - 1):
-            if bullish_fvg[j]:
-                g = bull_gap[j + 1]
-                if np.isfinite(g) and g >= min_gap:
-                    bull_qual_form[j] = min(1.0, float(g / cap_ratio))
-            if bearish_fvg[j]:
-                g = bear_gap[j + 1]
-                if np.isfinite(g) and g >= min_gap:
-                    bear_qual_form[j] = min(1.0, float(g / cap_ratio))
+        # Confirmation bar t = third candle: gap between high[t-2] and low[t] (bullish).
+        for t in range(2, n):
+            prev_prev_high = high[t - 2]
+            if prev_prev_high != 0 and low[t] > prev_prev_high:
+                g = (low[t] - prev_prev_high) / prev_prev_high
+                if g >= min_gap:
+                    bullish_fvg[t] = True
+                    bull_qual[t] = min(1.0, float(g / cap_ratio))
+
+            prev_prev_low = low[t - 2]
+            if prev_prev_low != 0 and high[t] < prev_prev_low:
+                g = (prev_prev_low - high[t]) / prev_prev_low
+                if g >= min_gap:
+                    bearish_fvg[t] = True
+                    bear_qual[t] = min(1.0, float(g / cap_ratio))
 
         df["bullish_fvg"] = bullish_fvg
         df["bearish_fvg"] = bearish_fvg
-        df["in_bullish_fvg"] = df["bullish_fvg"].astype(int).rolling(window=validity, min_periods=1).max().astype(bool)
-        df["in_bearish_fvg"] = df["bearish_fvg"].astype(int).rolling(window=validity, min_periods=1).max().astype(bool)
+        df["in_bullish_fvg"] = (
+            pd.Series(bullish_fvg, index=df.index).astype(int).rolling(window=validity, min_periods=1).max().astype(bool)
+        )
+        df["in_bearish_fvg"] = (
+            pd.Series(bearish_fvg, index=df.index).astype(int).rolling(window=validity, min_periods=1).max().astype(bool)
+        )
         df["bullish_fvg_quality"] = (
-            pd.Series(bull_qual_form, index=df.index).rolling(window=validity, min_periods=1).max().fillna(0.0)
+            pd.Series(bull_qual, index=df.index).rolling(window=validity, min_periods=1).max().fillna(0.0)
         )
         df["bearish_fvg_quality"] = (
-            pd.Series(bear_qual_form, index=df.index).rolling(window=validity, min_periods=1).max().fillna(0.0)
+            pd.Series(bear_qual, index=df.index).rolling(window=validity, min_periods=1).max().fillna(0.0)
         )
         return df
 

@@ -1,4 +1,6 @@
-"""Swing high/low and pivot detection."""
+"""Swing high/low and pivot detection (confirmation-time / causal)."""
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -28,39 +30,87 @@ def swing_lows(data: pd.DataFrame, lookback: int = 20, shift: bool = True) -> pd
 
 
 def pivot_highs(data: pd.DataFrame, pivot_bars: int = 2) -> pd.Series:
-    """Identify pivot highs: bar whose high equals the max in a centered window.
+    """Pivot high confirmed only after the right-side window has closed.
 
-    Returns boolean Series.
+    Origin bar ``i`` is a pivot high iff ``high[i]`` equals the max on
+    ``[i - pivot_bars, i + pivot_bars]``. The boolean is written at confirmation
+    index ``i + pivot_bars`` — never back-written onto ``i``.
     """
-    window = 2 * pivot_bars + 1
-    high_roll = data["high"].rolling(window, center=True, min_periods=pivot_bars + 1).max()
-    return (data["high"] == high_roll) & high_roll.notna()
+    high = data["high"].to_numpy(dtype=np.float64, copy=False)
+    n = len(high)
+    out = np.zeros(n, dtype=bool)
+    pb = int(pivot_bars)
+    if pb < 0:
+        raise ValueError("pivot_bars must be >= 0")
+    for c in range(2 * pb, n):
+        i = c - pb
+        window = high[i - pb : i + pb + 1]
+        if window.size and np.isfinite(high[i]) and high[i] == np.max(window[np.isfinite(window)]):
+            out[c] = True
+    return pd.Series(out, index=data.index, dtype=bool)
 
 
 def pivot_lows(data: pd.DataFrame, pivot_bars: int = 2) -> pd.Series:
-    """Identify pivot lows: bar whose low equals the min in a centered window.
+    """Pivot low confirmed only after the right-side window has closed.
 
-    Returns boolean Series.
+    See :func:`pivot_highs` for confirmation-time semantics.
     """
-    window = 2 * pivot_bars + 1
-    low_roll = data["low"].rolling(window, center=True, min_periods=pivot_bars + 1).min()
-    return (data["low"] == low_roll) & low_roll.notna()
+    low = data["low"].to_numpy(dtype=np.float64, copy=False)
+    n = len(low)
+    out = np.zeros(n, dtype=bool)
+    pb = int(pivot_bars)
+    if pb < 0:
+        raise ValueError("pivot_bars must be >= 0")
+    for c in range(2 * pb, n):
+        i = c - pb
+        window = low[i - pb : i + pb + 1]
+        if window.size and np.isfinite(low[i]) and low[i] == np.min(window[np.isfinite(window)]):
+            out[c] = True
+    return pd.Series(out, index=data.index, dtype=bool)
+
+
+def pivot_high_prices(data: pd.DataFrame, pivot_bars: int = 2) -> pd.Series:
+    """At confirmation bar ``c``, the confirmed pivot-high **price** (origin high)."""
+    high = data["high"].to_numpy(dtype=np.float64, copy=False)
+    n = len(high)
+    out = np.full(n, np.nan, dtype=np.float64)
+    pb = int(pivot_bars)
+    for c in range(2 * pb, n):
+        i = c - pb
+        window = high[i - pb : i + pb + 1]
+        finite = window[np.isfinite(window)]
+        if finite.size and np.isfinite(high[i]) and high[i] == np.max(finite):
+            out[c] = high[i]
+    return pd.Series(out, index=data.index)
+
+
+def pivot_low_prices(data: pd.DataFrame, pivot_bars: int = 2) -> pd.Series:
+    """At confirmation bar ``c``, the confirmed pivot-low **price** (origin low)."""
+    low = data["low"].to_numpy(dtype=np.float64, copy=False)
+    n = len(low)
+    out = np.full(n, np.nan, dtype=np.float64)
+    pb = int(pivot_bars)
+    for c in range(2 * pb, n):
+        i = c - pb
+        window = low[i - pb : i + pb + 1]
+        finite = window[np.isfinite(window)]
+        if finite.size and np.isfinite(low[i]) and low[i] == np.min(finite):
+            out[c] = low[i]
+    return pd.Series(out, index=data.index)
 
 
 def last_swing_low(
     high: np.ndarray, low: np.ndarray, close: np.ndarray,
     end_idx: int, pivot_n: int = 3, lookback: int = 50,
 ) -> float:
-    """Find the most recent swing low price before end_idx.
-
-    Used for structure-based trailing stops on long trades.
-    """
+    """Most recent swing low with right-window confirmed by ``end_idx`` (inclusive)."""
     start = max(0, end_idx - lookback)
     best = float("nan")
+    # Origin i needs i+pivot_n <= end_idx for confirmation-time causality.
     for i in range(start + pivot_n, end_idx - pivot_n + 1):
         is_pivot = True
         for j in range(i - pivot_n, i + pivot_n + 1):
-            if j == i or j < 0 or j >= len(low):
+            if j == i or j < 0 or j > end_idx:
                 continue
             if low[j] < low[i]:
                 is_pivot = False
@@ -74,16 +124,13 @@ def last_swing_high(
     high: np.ndarray, low: np.ndarray, close: np.ndarray,
     end_idx: int, pivot_n: int = 3, lookback: int = 50,
 ) -> float:
-    """Find the most recent swing high price before end_idx.
-
-    Used for structure-based trailing stops on short trades.
-    """
+    """Most recent swing high with right-window confirmed by ``end_idx`` (inclusive)."""
     start = max(0, end_idx - lookback)
     best = float("nan")
     for i in range(start + pivot_n, end_idx - pivot_n + 1):
         is_pivot = True
         for j in range(i - pivot_n, i + pivot_n + 1):
-            if j == i or j < 0 or j >= len(high):
+            if j == i or j < 0 or j > end_idx:
                 continue
             if high[j] > high[i]:
                 is_pivot = False

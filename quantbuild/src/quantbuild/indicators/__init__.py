@@ -6,6 +6,8 @@ from src.quantbuild.indicators.swing import (
     swing_lows,
     pivot_highs,
     pivot_lows,
+    pivot_high_prices,
+    pivot_low_prices,
 )
 from src.quantbuild.indicators.ma import ema, sma
 from src.quantbuild.indicators.bollinger import bollinger_bands
@@ -19,6 +21,8 @@ __all__ = [
     "swing_lows",
     "pivot_highs",
     "pivot_lows",
+    "pivot_high_prices",
+    "pivot_low_prices",
     "ema",
     "sma",
     "bollinger_bands",

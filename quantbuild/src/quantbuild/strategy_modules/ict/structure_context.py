@@ -1,9 +1,15 @@
-"""Market structure context: HH/HL (bullish), LH/LL (bearish), or RANGE."""
+"""Market structure context: HH/HL (bullish), LH/LL (bearish), or RANGE.
+
+Pivots are confirmation-time only (see ``indicators.swing.pivot_*_prices``).
+"""
+from __future__ import annotations
+
 from typing import Dict
 
 import numpy as np
 import pandas as pd
 
+from src.quantbuild.indicators.swing import pivot_high_prices, pivot_low_prices
 from src.quantbuild.strategy_modules.ict.structure_labels import (
     BULLISH_STRUCTURE, BEARISH_STRUCTURE, RANGE,
 )
@@ -12,21 +18,22 @@ from src.quantbuild.strategy_modules.ict.structure_labels import (
 def compute_structure_labels(
     data: pd.DataFrame, lookback: int = 30, pivot_bars: int = 2,
 ) -> pd.Series:
-    """Per bar: BULLISH_STRUCTURE (HH/HL), BEARISH_STRUCTURE (LH/LL), or RANGE."""
-    n = len(data)
-    high_roll = data["high"].rolling(2 * pivot_bars + 1, center=True, min_periods=pivot_bars + 1).max()
-    low_roll = data["low"].rolling(2 * pivot_bars + 1, center=True, min_periods=pivot_bars + 1).min()
-    is_pivot_high = ((data["high"] == high_roll) & high_roll.notna()).values
-    is_pivot_low = ((data["low"] == low_roll) & low_roll.notna()).values
+    """Per bar: BULLISH_STRUCTURE (HH/HL), BEARISH_STRUCTURE (LH/LL), or RANGE.
 
-    high_arr = data["high"].values.astype(np.float64)
-    low_arr = data["low"].values.astype(np.float64)
+    Uses only pivot prices that have already been confirmed by the right-side
+    window (flags/prices appear at confirmation bars, never back-written).
+    """
+    n = len(data)
+    ph_price = pivot_high_prices(data, pivot_bars=pivot_bars).to_numpy(dtype=np.float64)
+    pl_price = pivot_low_prices(data, pivot_bars=pivot_bars).to_numpy(dtype=np.float64)
     out_arr = np.full(n, 0, dtype=np.int8)
 
     for i in range(lookback, n):
         start = max(0, i - lookback)
-        ph_vals = high_arr[start:i + 1][is_pivot_high[start:i + 1]]
-        pl_vals = low_arr[start:i + 1][is_pivot_low[start:i + 1]]
+        ph_vals = ph_price[start : i + 1]
+        pl_vals = pl_price[start : i + 1]
+        ph_vals = ph_vals[np.isfinite(ph_vals)]
+        pl_vals = pl_vals[np.isfinite(pl_vals)]
 
         if len(ph_vals) < 2 or len(pl_vals) < 2:
             continue
