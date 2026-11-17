@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import textwrap
@@ -120,19 +119,25 @@ def test_t1_scan_runs_delete_allowed_cases(tmp_path, label, payload, raw, expect
     assert rows[0].delete_allowed is expected
 
 
-def test_t1_unreadable_status_json_denies(tmp_path):
+def test_t1_unreadable_status_json_denies(tmp_path, monkeypatch):
+    """R1: simulate unreadability without chmod(0) (root can still read mode 0)."""
     qmos = tmp_path / "qmos"
     run_dir = qmos / "runs" / "exp" / "unreadable"
     _write_status(run_dir, {"status": "scratch", "delete_allowed": True})
     status = run_dir / "status.json"
-    status.chmod(0)
-    try:
-        rows = dl._scan_runs(runs_root=qmos / "runs", qmos_root=qmos)
-        assert len(rows) == 1
-        assert rows[0].delete_allowed is False
-        assert rows[0].status == "unknown"
-    finally:
-        status.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    status_resolved = status.resolve()
+    real_read_text = Path.read_text
+
+    def _read_text(self, *args, **kwargs):
+        if self.resolve() == status_resolved:
+            raise PermissionError("denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+    rows = dl._scan_runs(runs_root=qmos / "runs", qmos_root=qmos)
+    assert len(rows) == 1
+    assert rows[0].delete_allowed is False
+    assert rows[0].status == "unknown"
 
 
 # --- T3: filesystem invariant (real tree, no mocks-only) ---
