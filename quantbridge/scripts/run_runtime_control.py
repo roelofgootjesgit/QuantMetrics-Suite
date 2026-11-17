@@ -19,12 +19,26 @@ from quantbridge.accounts.account_state_machine import AccountStateMachine
 from quantbridge.ops.observability import JsonlEventSink
 
 
+_GATE_ENV_KEYS = (
+    "QUANTMETRICS_EXECUTION_AUTHORIZED",
+    "QUANTMETRICS_ALLOWED_ACCOUNT_IDS",
+    "QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS",
+)
+
+
 def load_env_files() -> None:
+    """Load non-gate credentials only. Gate keys must never be minted from files."""
+    from quantbridge.safety.live_execution_gate import (
+        LiveExecutionDenied,
+        assert_dotenv_path_has_no_gate_keys,
+    )
+
     candidates = [ROOT / ".env", ROOT / "local.env"]
     original_env = set(os.environ.keys())
     for env_path in candidates:
         if not env_path.exists():
             continue
+        assert_dotenv_path_has_no_gate_keys(env_path)
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -34,6 +48,8 @@ def load_env_files() -> None:
             value = value.strip()
             if not key or not value:
                 continue
+            if key in _GATE_ENV_KEYS:
+                raise LiveExecutionDenied(f"gate_key_present_in_dotenv:{env_path}")
             if key in original_env:
                 continue
             if env_path.name == "local.env" or key not in os.environ:
@@ -90,13 +106,31 @@ def main() -> int:
     client_secret = str(os.getenv("CTRADER_CLIENT_SECRET") or broker_cfg.get("client_secret", ""))
     instrument = str(symbol_cfg.get("internal", broker_cfg.get("instrument", "XAUUSD")))
 
+    environment = str(broker_cfg.get("environment", "demo"))
+    close_on_failsafe = not args.no_close_on_failsafe
+    # PR-B #12: openapi needs SESSION (broker init); ORDERS if failsafe may close.
+    if mode == "openapi" and close_on_failsafe:
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+
+        assert_live_execution_allowed(
+            LiveExecutionRequest(
+                provider="ctrader",
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        )
+
     broker = CTraderBroker(
         account_id=account_id,
         access_token=access_token,
         client_id=client_id,
         client_secret=client_secret,
         instrument=instrument,
-        environment=str(broker_cfg.get("environment", "demo")),
+        environment=environment,
         mode=mode,
     )
     account_machine = AccountStateMachine(path=args.account_state_file)
@@ -117,7 +151,7 @@ def main() -> int:
         reconnect_retries=args.retries,
         reconnect_backoff_seconds=args.backoff_seconds,
         mismatch_streak_failsafe=args.failsafe_streak,
-        close_on_failsafe=not args.no_close_on_failsafe,
+        close_on_failsafe=close_on_failsafe,
         alert_callback=build_alert_callback(),
         event_callback=(event_sink.emit if event_sink else None),
     )

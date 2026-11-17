@@ -108,6 +108,24 @@ def main() -> int:
     else:
         report["tcp_demo_openapi"] = {"ok": None, "error": "skipped_no_endpoints"}
 
+    mock_mode = bool(broker_cfg.get("mock_mode", True))
+    # PR-B: SESSION preflight before non-mock diagnose connect.
+    if not mock_mode:
+        from src.quantbuild.execution.live_execution_preflight import (
+            broker_fields_from_cfg,
+            preflight_live_execution,
+        )
+
+        provider, environment, account_id = broker_fields_from_cfg(cfg)
+        if not account_id:
+            account_id = str(os.getenv("CTRADER_ACCOUNT_ID", "") or "")
+        preflight_live_execution(
+            provider=provider,
+            environment=environment,
+            account_id=account_id,
+            intent="SESSION",
+        )
+
     broker = create_broker(cfg)
     report["resolved_mock_mode"] = bool(getattr(broker, "mock_mode", True))
     report["resolved_account_id"] = str(getattr(broker, "account_id", "") or "")

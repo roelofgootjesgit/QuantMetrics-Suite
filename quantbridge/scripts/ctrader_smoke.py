@@ -17,12 +17,26 @@ if str(SRC) not in sys.path:
 from quantbridge.execution.brokers.ctrader_broker import CTraderBroker
 
 
+_GATE_ENV_KEYS = (
+    "QUANTMETRICS_EXECUTION_AUTHORIZED",
+    "QUANTMETRICS_ALLOWED_ACCOUNT_IDS",
+    "QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS",
+)
+
+
 def load_local_env() -> None:
+    """Load non-gate credentials only. Gate keys must never be minted from files."""
+    from quantbridge.safety.live_execution_gate import (
+        LiveExecutionDenied,
+        assert_dotenv_path_has_no_gate_keys,
+    )
+
     env_candidates = [ROOT / ".env", ROOT / "local.env"]
     preexisting_env_keys = set(os.environ.keys())
     for env_path in env_candidates:
         if not env_path.exists():
             continue
+        assert_dotenv_path_has_no_gate_keys(env_path)
         for raw_line in env_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -32,6 +46,8 @@ def load_local_env() -> None:
             value = value.strip()
             if not key:
                 continue
+            if key in _GATE_ENV_KEYS:
+                raise LiveExecutionDenied(f"gate_key_present_in_dotenv:{env_path}")
             if value == "":
                 continue
             if key in preexisting_env_keys:
@@ -91,13 +107,30 @@ def main() -> int:
         or broker_cfg.get("client_secret", "")
     )
 
+    environment = str(broker_cfg.get("environment", "demo"))
+    # PR-B #12: ORDERS preflight for openapi smoke before client/order work.
+    if effective_mode == "openapi":
+        from quantbridge.safety.live_execution_gate import (
+            LiveExecutionRequest,
+            assert_live_execution_allowed,
+        )
+
+        assert_live_execution_allowed(
+            LiveExecutionRequest(
+                provider="ctrader",
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        )
+
     broker = CTraderBroker(
         account_id=account_id,
         access_token=access_token,
         client_id=client_id,
         client_secret=client_secret,
         instrument=str(symbol_cfg.get("internal", broker_cfg.get("instrument", "XAUUSD"))),
-        environment=str(broker_cfg.get("environment", "demo")),
+        environment=environment,
         mode=effective_mode,
     )
 

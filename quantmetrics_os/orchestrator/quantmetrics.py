@@ -129,6 +129,39 @@ def cmd_build(args: argparse.Namespace) -> int:
     config = args.config.strip()
     env = _quantbuild_env(root)
 
+    # PR-B #11: ORDERS preflight before spawning --real child (spawn UX).
+    if args.real:
+        try:
+            bridge_src = (_QUANTMETRICS_OS_ROOT.parent / "quantbridge" / "src").resolve()
+            if bridge_src.is_dir() and str(bridge_src) not in sys.path:
+                sys.path.insert(0, str(bridge_src))
+            qb_src = (root / "src").resolve()
+            if qb_src.is_dir() and str(qb_src) not in sys.path:
+                sys.path.insert(0, str(qb_src))
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from src.quantbuild.config import load_config
+            from src.quantbuild.execution.live_execution_preflight import (
+                broker_fields_from_cfg,
+                preflight_live_execution,
+            )
+            from quantbridge.safety.live_execution_gate import LiveExecutionDenied
+
+            cfg_path = Path(config)
+            if not cfg_path.is_absolute():
+                cfg_path = root / cfg_path
+            cfg = load_config(str(cfg_path))
+            provider, environment, account_id = broker_fields_from_cfg(cfg)
+            preflight_live_execution(
+                provider=provider,
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        except (LiveExecutionDenied, RuntimeError, ImportError, OSError, ValueError) as exc:
+            print(f"Refuse --real spawn: {exc}", file=sys.stderr)
+            return 2
+
     if getattr(args, "notify_start", False):
         notify_cmd = [
             python,

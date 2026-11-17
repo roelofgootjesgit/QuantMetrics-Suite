@@ -98,6 +98,26 @@ def cmd_live(args: argparse.Namespace) -> int:
     from src.quantbuild.execution.live_runner import LiveRunner
     from src.quantbuild.version import __version__
 
+    # PR-B #9: ORDERS preflight for --real before LiveRunner / any broker work.
+    if not args.dry_run:
+        from src.quantbuild.execution.live_execution_preflight import (
+            broker_fields_from_cfg,
+            preflight_live_execution,
+        )
+
+        provider, environment, account_id = broker_fields_from_cfg(cfg)
+        try:
+            preflight_live_execution(
+                provider=provider,
+                environment=environment,
+                account_id=account_id,
+                intent="ORDERS",
+            )
+        except RuntimeError as exc:
+            # LiveExecutionDenied subclasses RuntimeError.
+            print(f"Live execution denied: {exc}", file=sys.stderr)
+            return 2
+
     mode_line = "DRY_RUN (no broker orders)" if args.dry_run else "REAL (broker orders)"
     cfg_line = str(args.config).replace("\\", "/") if args.config else "(CONFIG_PATH env or configs/default.yaml)"
     sym = cfg.get("symbol", "?")
