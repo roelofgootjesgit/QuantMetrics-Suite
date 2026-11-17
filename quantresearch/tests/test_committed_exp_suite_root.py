@@ -31,6 +31,41 @@ def _configured_suite_root(eid: str) -> Path:
     return Path(raw)
 
 
+def _committed_exp_path_bundle(eid: str = "EXP-2021-2025-throughput-discovery-v1"):
+    """Resolved suite/run/canonical paths + exact missing-artefact error strings."""
+    exp = load_experiment(eid)
+    links = load_links(eid) or {}
+    suite_root = _configured_suite_root(eid)
+    suite_key = suite_root.resolve()
+    qrd = str(links.get("quantos_run_dir") or "").strip()
+    assert qrd, "committed links.json must declare quantos_run_dir"
+    cap = str(exp.get("canonical_artifact_path") or "").strip()
+    assert cap, "committed experiment.json must declare canonical_artifact_path"
+    expected_run = (suite_key / qrd).resolve()
+    expected_cap = (suite_key / cap).resolve()
+    expected_errs = [
+        f"QuantOS run dir does not exist: {expected_run}",
+        f"canonical_artifact_path is not a directory: {expected_cap}",
+    ]
+    return eid, suite_root, suite_key, expected_run, expected_cap, expected_errs
+
+
+def _matches_suite_root(self: Path, suite_root: Path, suite_key: Path) -> bool:
+    try:
+        resolved = self.resolve()
+    except OSError:
+        resolved = self
+    return resolved == suite_key or str(self) == str(suite_root)
+
+
+def _matches_exact(self: Path, target: Path) -> bool:
+    try:
+        resolved = self.resolve()
+    except OSError:
+        resolved = self
+    return resolved == target or str(self) == str(target)
+
+
 @pytest.mark.parametrize("eid", COMMITTED_EXP_IDS)
 def test_committed_exp_validate_c1_suite_root_branch(eid: str):
     """C1 machine-dependent exact asserts — no skip/xfail/soft membership checks.
@@ -50,44 +85,76 @@ def test_committed_exp_validate_c1_suite_root_branch(eid: str):
 
 
 def test_committed_exp_existing_suite_root_missing_runs_not_auto_green(monkeypatch):
-    """C1 existing-root branch via path-scoped Path.is_dir monkeypatch.
+    """C1 existing-root branch via host-independent path-scoped Path.is_dir.
 
-    Making only the configured suite_root appear to exist must **not** yield
-    ``errs == []`` when QuantOS run trees are absent — expect exact run/artefact
-    validation errors (not the suite_root-missing message).
+    Scoped patch returns:
+    - True for configured suite_root
+    - False for expected_run and expected_cap (missing artefacts)
+    - real_is_dir for unrelated paths (no recursion into Path.is_dir)
+
+    Assert exact two missing-artefact errors — not auto-green.
     """
-    eid = "EXP-2021-2025-throughput-discovery-v1"
-    exp = load_experiment(eid)
-    links = load_links(eid) or {}
-    suite_root = _configured_suite_root(eid)
-    suite_key = suite_root.resolve()
-    qrd = str(links.get("quantos_run_dir") or "").strip()
-    assert qrd, "committed links.json must declare quantos_run_dir"
-    cap = str(exp.get("canonical_artifact_path") or "").strip()
-    assert cap, "committed experiment.json must declare canonical_artifact_path"
+    eid, suite_root, suite_key, expected_run, expected_cap, expected_errs = (
+        _committed_exp_path_bundle()
+    )
 
-    expected_run = (suite_key / qrd).resolve()
-    expected_cap = (suite_key / cap).resolve()
-    expected_errs = [
-        f"QuantOS run dir does not exist: {expected_run}",
-        f"canonical_artifact_path is not a directory: {expected_cap}",
-    ]
-
+    # Capture unbound original before any Path.is_dir monkeypatch (no recursion).
     real_is_dir = Path.is_dir
 
-    def scoped_is_dir(self: Path) -> bool:  # noqa: N802 — matches Path.is_dir
-        try:
-            resolved = self.resolve()
-        except OSError:
-            resolved = self
-        if resolved == suite_key or str(self) == str(suite_root):
+    def missing_artifact_is_dir(self: Path) -> bool:  # noqa: N802
+        if _matches_suite_root(self, suite_root, suite_key):
+            return True
+        if _matches_exact(self, expected_run) or _matches_exact(self, expected_cap):
+            return False
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", missing_artifact_is_dir)
+
+    assert suite_root.is_dir() is True
+    assert expected_run.is_dir() is False  # deterministic patched result (not host FS)
+    assert expected_cap.is_dir() is False
+
+    errs = validate_experiment(eid)
+    assert errs == expected_errs, errs
+
+
+def test_committed_exp_missing_artifact_false_wins_over_rich_host_simulation(monkeypatch):
+    """Proof: simulated artefact-rich host still yields missing-artefact errors.
+
+    1) Preliminary patch: suite_root + expected_run + expected_cap → True (rich host).
+    2) Apply missing-artefact patch: suite_root True, expected_run/cap **False**,
+       unrelated → original ``real_is_dir`` (captured once; never calls Path.is_dir).
+    Explicit False must win; exact two errors still occur. No patch chaining recursion.
+    """
+    eid, suite_root, suite_key, expected_run, expected_cap, expected_errs = (
+        _committed_exp_path_bundle()
+    )
+
+    real_is_dir = Path.is_dir  # original OS implementation — never re-enter patches
+
+    def rich_host_is_dir(self: Path) -> bool:  # noqa: N802
+        if _matches_suite_root(self, suite_root, suite_key):
+            return True
+        if _matches_exact(self, expected_run) or _matches_exact(self, expected_cap):
             return True
         return real_is_dir(self)
 
-    monkeypatch.setattr(Path, "is_dir", scoped_is_dir)
+    monkeypatch.setattr(Path, "is_dir", rich_host_is_dir)
+    assert expected_run.is_dir() is True
+    assert expected_cap.is_dir() is True
 
-    assert suite_root.is_dir()
-    assert not expected_run.is_dir()
+    def missing_artifact_is_dir(self: Path) -> bool:  # noqa: N802
+        if _matches_suite_root(self, suite_root, suite_key):
+            return True
+        if _matches_exact(self, expected_run) or _matches_exact(self, expected_cap):
+            return False
+        # Must use original, not Path.is_dir / rich_host (avoids recursion).
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", missing_artifact_is_dir)
+    assert suite_root.is_dir() is True
+    assert expected_run.is_dir() is False
+    assert expected_cap.is_dir() is False
 
     errs = validate_experiment(eid)
     assert errs == expected_errs, errs

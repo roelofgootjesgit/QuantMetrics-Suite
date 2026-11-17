@@ -13,6 +13,16 @@
 | **SOURCE_MUTATION** | Intentional edit to production `.py` source, run tests, restore — **NOT RUN** by Cursor in this PR |
 | **INDEPENDENT_REVIEWER** | Claude-reported source mutants on Impl-B review — cited only; not re-attributed to Cursor |
 
+### SOURCE_MUTATION protocol (scratch copy — when actually executed)
+
+Editable `pip install -e ./quantresearch` can still import the **original** tree. Before claiming SOURCE_MUTATION:
+
+1. Copy package tree to a scratch dir; apply the source edit only there.
+2. Run with `PYTHONPATH=<scratch-copy>/quantresearch` (prepend; do not rely on editable alone).
+3. Verify `import quantresearch.preregistration as m; print(m.__file__)` (and ledger) points **inside** the scratch copy.
+4. Run `pytest quantresearch/tests -q --disable-socket --allow-unix-socket`; record failing node ids; restore/discard scratch.
+5. Label results `SOURCE_MUTATION` only if steps 2–3 were verified. Reviewer-reported mutants stay `INDEPENDENT_REVIEWER`.
+
 ## M1 — honest selftest rename
 
 - Renamed `test_mutation_validate_temporal_integrity_always_true_killed` →  
@@ -49,18 +59,22 @@ git diff main -- 'quantresearch/experiments/**/experiment.json' → empty
 
 No workflow / governance / production / broker changes.
 
+## B1 repair (REQUEST CHANGES @ `3205b29`)
+
+- `test_committed_exp_existing_suite_root_missing_runs_not_auto_green`: host-independent scoped `Path.is_dir` — True suite_root, **False** `expected_run`/`expected_cap`, else `real_is_dir` (no recursion).
+- Added `test_committed_exp_missing_artifact_false_wins_over_rich_host_simulation`: rich-host True then missing-artefact False wins → exact two errors.
+- Deterministic `assert … is False` on patched paths (not host FS).
+
 ## Commands / results
 
 | Command | Result |
 |---|---|
-| `pytest quantresearch/tests -q --disable-socket --allow-unix-socket` | **58 passed, 0 failed** |
-| `pytest tests/test_ci_workflow_preservation.py -q` | **26 passed** |
+| focused `test_committed_exp_suite_root.py -v` | **4 passed** |
+| `pytest quantresearch/tests -q --disable-socket --allow-unix-socket` | **59 passed, 0 failed** |
 | `pytest tests -q` | **175 passed** |
-| C1 unavailable-root (POSIX) | both EXP ids → exact `[SUITE_ROOT_ERR]` |
-| C1 `Path.is_dir` scoped monkeypatch | exact run-dir + canonical_artifact errors (not auto-green) |
 | `SOURCE_MUTATION` local source edits | **NOT RUN** |
 | hyp003 / experiment.json vs main | **empty diffs** |
 
 ## Stop
 
-**READY FOR CLAUDE CODE REVIEW #124**
+**READY FOR CLAUDE B1 DIFF RECHECK #124**
