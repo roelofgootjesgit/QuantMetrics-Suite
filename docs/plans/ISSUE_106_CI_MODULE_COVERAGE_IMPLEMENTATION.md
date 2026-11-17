@@ -4,7 +4,7 @@
 **Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/118  
 **Branch:** `cursor/issue-106-ci-coverage-plan-3716`  
 **Plan APPROVE head:** `481b064ea8538d5148c3f90fc638e9693337f8fd`  
-**Implementation head:** *(set after push; see PR tip / `git rev-parse HEAD`)*  
+**Implementation head (CI green):** `cfedc39e663f6974c634fa8af39fef3e7cca1233`  
 **Base:** `main` @ `4f10151e1a33a94c1c29bf48c543e11eb9ffc06d`  
 **Stop line:** **READY FOR CLAUDE CODE REVIEW #106**
 
@@ -71,9 +71,20 @@ pytest quantbuild/tests -q --disable-socket --allow-unix-socket
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| *(fill after push)* | | tip | pending |
+| push | [44138739111](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44138739111) | `cfedc39…` | **success** |
+| pull_request | [44138750567](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44138750567) | `cfedc39…` | **success** |
 
-Expected job steps: root 115 → #104 N/W 64 → #104 E 43 → demo → analytics 45 → quantlog 61 → quantbuild 247/1skip.
+Job `test-and-demo` on `cfedc39`:
+
+| Step | Result |
+|---|---|
+| `pytest tests -q` | **115 passed** |
+| #104 N/W/mutation | **64 passed** |
+| #104 E/mutation | **43 passed** |
+| `run_demo.py` | `VALIDATION_REQUIRED` |
+| quantanalytics (socket guard) | **45 passed** |
+| quantlog (cwd + socket guard) | **61 passed** |
+| quantbuild (socket guard) | **247 passed, 1 skipped** |
 
 ---
 
