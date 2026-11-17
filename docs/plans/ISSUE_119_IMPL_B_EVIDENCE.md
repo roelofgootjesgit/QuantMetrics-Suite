@@ -17,13 +17,14 @@ git diff main -- quantresearch/pipelines/hyp003_preregistration.json
 → empty (file not modified)
 ```
 
-## Mutation table
+## Mutation / selftest table (honesty reclassification — #124 M1)
 
-| Mutant | Guard | Result |
+| Claim | Classification | Result |
 |---|---|---|
-| `validate_temporal_integrity` → always `True` | negative run-before-lock contract | **KILLED** |
-| QR CI step removed | preservation positive QR require | **KILLED** |
-| QR step without `--disable-socket` | preservation positive QR require | **KILLED** |
+| monkeypatch `validate_temporal_integrity` → always `True` | **MONKEYPATCH_SELFTEST** (renamed in #124; not source mutation) | negative contract fails as designed |
+| QR CI step removed | workflow text mutant vs preservation guard | **KILLED** |
+| QR step without `--disable-socket` | workflow text mutant vs preservation guard | **KILLED** |
+| Claude source edits to `preregistration.py` / ledger | **INDEPENDENT_REVIEWER** | cited on #119 review only; Cursor **SOURCE_MUTATION NOT RUN** in #119 Impl-B |
 
 ## Commands / results
 

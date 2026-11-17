@@ -71,8 +71,14 @@ def test_hyp003_style_negative_tmp_run_before_lock_rejected():
     _assert_negative_run_before_lock(d, "2026-05-04T10:00:00Z")
 
 
-def test_mutation_validate_temporal_integrity_always_true_killed(monkeypatch):
-    """Mutant: validate_temporal_integrity → always True must fail the negative contract."""
+def test_selftest_negative_contract_fails_if_temporal_integrity_always_true(monkeypatch):
+    """MONKEYPATCH_SELFTEST (not SOURCE_MUTATION): if temporal integrity is stubbed
+    to always True at the call site, the negative contract helper must fail.
+
+    Classification: MONKEYPATCH_SELFTEST. Does **not** prove a source edit to
+    ``preregistration.py`` is killed. Independent Claude source mutants are
+    INDEPENDENT_REVIEWER evidence only unless Cursor re-runs SOURCE_MUTATION.
+    """
     import quantresearch.preregistration as preg
 
     d = _minimal_locked_prereg(

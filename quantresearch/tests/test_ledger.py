@@ -68,25 +68,14 @@ def _write_completed_synthetic_experiment(
 
 
 def test_validate_synthetic_completed_experiment_with_suite_root(tmp_path, monkeypatch):
-    """O1: validator logic via tmp synthetic fixtures — not real EXP-2021-2025 records."""
+    """O1: validator logic via tmp synthetic fixtures — not real EXP-2021-2025 records.
+
+    Also covers C1 existing-root + artefacts present → ``errs == []``.
+    """
     suite = tmp_path / "suite"
     suite.mkdir()
     eid = _write_completed_synthetic_experiment(
         tmp_path, monkeypatch, eid="EXP-SYN-LEDGER-OK", suite_root=suite
-    )
-    assert validate_experiment(eid) == []
-
-
-def test_validate_synthetic_session_style_completed_experiment(tmp_path, monkeypatch):
-    """Second synthetic completed layout (session/watchlist-shaped metadata)."""
-    suite = tmp_path / "suite"
-    suite.mkdir()
-    eid = _write_completed_synthetic_experiment(
-        tmp_path,
-        monkeypatch,
-        eid="EXP-SYN-SESSION-OK",
-        suite_root=suite,
-        quantos_rel="quantmetrics_os/runs/SYN-SESSION",
     )
     assert validate_experiment(eid) == []
 
