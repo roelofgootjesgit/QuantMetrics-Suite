@@ -1,5 +1,10 @@
 """Market Structure Shift (MSS) – confirmation-time / causal structure break.
 
+Semantics (M0.5): ``bullish_mss`` / ``bearish_mss`` are **repeated state** flags
+for bars that trade above/below the **last confirmed** swing level (confirmation-
+time pivot price, ffilled), not one-shot edge triggers. Behaviour is unchanged
+by this documentation note.
+
 Restored MSS is a **functionally new feature** vs the legacy centered-swing
 implementation: new baselines and new experiment IDs are required (issue #127).
 """
