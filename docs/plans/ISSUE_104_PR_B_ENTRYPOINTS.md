@@ -3,7 +3,8 @@
 **PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/116 (draft)  
 **Branch:** `cursor/issue-104-pr-b-entrypoints-3716`  
 **Repair round:** 1/2 (TESTS ONLY — T1 blocker)  
-**Head SHA:** exact PR #116 head at recheck time (`git rev-parse HEAD` on this branch)  
+**Repair 1/2 tests head:** `0da6daac247dc29d7ca11376ab41e0b9c86200bf`  
+**Branch tip:** see PR head after this evidence update (`git rev-parse HEAD`)  
 **Base:** `main` at/after `4a2ea7eba0cf393b246fc33203a5c956398ed5b0` (PR-A #115 merged)  
 **Brief:** issue #104 — PR-B; tech-lead REQUEST CHANGES on `287440e` (T1: 10/17 mutants SURVIVED)  
 **Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5 / 7 / 9 / 11  
@@ -76,7 +77,7 @@ python run_demo.py
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| push (repair 1/2) | *(filled after CI)* | tip after this commit | pending |
+| push (repair 1/2 tests) | *(CI on `0da6daa`)* | `0da6daa…` | pending |
 
 Job `test-and-demo` expected steps:
 
