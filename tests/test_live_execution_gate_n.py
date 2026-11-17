@@ -1,6 +1,7 @@
-"""Issue #104 PR-A — policy negative tests N1–N12 / N10* (no network)."""
+"""Issue #104 PR-A — policy negative tests N1–N12 / N10* (B1/B2 repair)."""
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from quantbridge.safety.live_execution_gate import (
     assert_dotenv_path_has_no_gate_keys,
     assert_live_execution_allowed,
     canonicalize_ctrader_account_id,
+    env_file_contains_gate_keys,
     resolve_ctrader_host,
 )
 
@@ -37,7 +39,7 @@ def _allowed_demo(**extra: str) -> dict[str, str]:
 
 
 def test_n1_unknown_environments_denied():
-    for bad in ("", "prod", "Practice", "practice"):
+    for bad in ("", "prod", "Practice"):
         with pytest.raises(LiveExecutionDenied):
             assert_live_execution_allowed(
                 LiveExecutionRequest("ctrader", bad, "12345678", "SESSION"),
@@ -49,7 +51,7 @@ def test_n1_unknown_environments_denied():
 
 
 def test_n2_live_default_allowlist_denied():
-    environ = _env(QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678")  # default demo-only
+    environ = _env(QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678")
     with pytest.raises(LiveExecutionDenied):
         assert_live_execution_allowed(
             LiveExecutionRequest("ctrader", "live", "12345678", "SESSION"),
@@ -70,17 +72,9 @@ def test_n3a_live_allowlisted_auth_missing_denied():
             env_file_paths=[],
             enablement_path=Path("/nonexistent/execution_authorization"),
         )
-    with pytest.raises(LiveExecutionDenied):
-        assert_live_execution_allowed(
-            LiveExecutionRequest("ctrader", "live", "12345678", "SESSION"),
-            environ=environ,
-            env_file_paths=[],
-            enablement_path=Path("/nonexistent/execution_authorization"),
-        )
 
 
 def test_n3b_c3_live_allowlisted_auth_one_still_frozen():
-    """C3: auth=1 + allowlist live still DENY while enablement file absent."""
     environ = _env(
         QUANTMETRICS_EXECUTION_AUTHORIZED="1",
         QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678",
@@ -174,67 +168,83 @@ def test_n9_oanda_practice_orders_ok():
     )
 
 
-def test_n10_dotenv_gate_keys_denied_c2(tmp_path, monkeypatch):
-    """C2: scan exact find_dotenv path; presence of gate key => deny."""
+@pytest.mark.parametrize(
+    "line",
+    [
+        "QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "export QUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "export\tQUANTMETRICS_EXECUTION_AUTHORIZED=1",
+        "QUANTMETRICS_EXECUTION_AUTHORIZED = 1",
+        "'QUANTMETRICS_EXECUTION_AUTHORIZED'=1",
+    ],
+)
+def test_n10_dotenv_parser_forms_detected(tmp_path, line):
+    """B1: dotenv_values detects export/tabs/quotes/spaced assignment."""
     dotenv = tmp_path / ".env"
-    dotenv.write_text("QUANTMETRICS_EXECUTION_AUTHORIZED=1\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
+    dotenv.write_text(line + "\n", encoding="utf-8")
+    assert env_file_contains_gate_keys(dotenv) is True
     with pytest.raises(LiveExecutionDenied):
         assert_dotenv_path_has_no_gate_keys(dotenv)
+    with pytest.raises(LiveExecutionDenied):
+        assert_live_execution_allowed(
+            LiveExecutionRequest("ctrader", "demo", "12345678", "ORDERS"),
+            environ=_allowed_demo(QUANTMETRICS_EXECUTION_AUTHORIZED="1"),
+            env_file_paths=[dotenv],
+        )
 
-    # Process missing auth: dotenv file with key still denies via env_file scan.
-    with pytest.raises(LiveExecutionDenied):
-        assert_live_execution_allowed(
-            LiveExecutionRequest("ctrader", "demo", "12345678", "ORDERS"),
-            environ=_env(
-                QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678",
-                QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS="demo",
-            ),
-            env_file_paths=[dotenv],
-        )
-    # Process explicitly 0: dotenv cannot override — file presence still denies.
-    with pytest.raises(LiveExecutionDenied):
-        assert_live_execution_allowed(
-            LiveExecutionRequest("ctrader", "demo", "12345678", "ORDERS"),
-            environ=_env(
-                QUANTMETRICS_EXECUTION_AUTHORIZED="0",
-                QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678",
-                QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS="demo",
-            ),
-            env_file_paths=[dotenv],
-        )
+
+def test_n10_behavioral_config_import_subprocess(tmp_path):
+    """B2: real import of quantbuild.config with malicious .env denies; keys not retained."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("export QUANTMETRICS_EXECUTION_AUTHORIZED=1\nFOO=bar\n", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k not in GATE_ENV_KEYS}
+    env["PYTHONPATH"] = (
+        f"{ROOT / 'quantbridge' / 'src'}:"
+        f"{ROOT / 'quantbuild' / 'src'}:"
+        f"{ROOT / 'quantbuild'}:"
+        f"{ROOT}"
+    )
+    code = textwrap.dedent(
+        f"""
+        import os, sys
+        os.chdir({str(tmp_path)!r})
+        for k in {list(GATE_ENV_KEYS)!r}:
+            os.environ.pop(k, None)
+        try:
+            import quantbuild.config as cfg  # noqa: F401
+            print("IMPORT_OK")
+            print("AUTH", repr(os.environ.get("QUANTMETRICS_EXECUTION_AUTHORIZED")))
+            raise SystemExit(0)
+        except Exception as e:
+            print("DENIED", type(e).__name__, e)
+            print("AUTH", repr(os.environ.get("QUANTMETRICS_EXECUTION_AUTHORIZED")))
+            raise SystemExit(2)
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "IMPORT_OK" not in proc.stdout
+    assert "LiveExecutionDenied" in proc.stdout or "gate_key" in proc.stdout.lower()
+    # Gate key must not remain set after denial/restore
+    assert "AUTH '1'" not in proc.stdout
+    assert "AUTH None" in proc.stdout
 
 
 def test_n10b_orchestrator_env_refuses_gate_keys(tmp_path):
     orch = tmp_path / "orchestrator"
     orch.mkdir()
-    (orch / ".env").write_text("QUANTMETRICS_EXECUTION_AUTHORIZED=1\nFOO=bar\n", encoding="utf-8")
-    script = textwrap.dedent(
-        f"""
-        import runpy, sys
-        from pathlib import Path
-        import quantmetrics_os.orchestrator.quantmetrics as qm
-        qm._ORCHESTRATOR_DIR = Path({str(orch)!r})
-        # Patch child spawn tracker
-        calls = []
-        def fake_call(*a, **k):
-            calls.append(1)
-            return 0
-        import subprocess
-        subprocess.call = fake_call
-        try:
-            qm._bootstrap_env()
-        except SystemExit as e:
-            print("EXIT", e.code)
-            print("CALLS", len(calls))
-            raise SystemExit(0)
-        print("EXIT", 0)
-        print("CALLS", len(calls))
-        """
+    (orch / ".env").write_text(
+        "export QUANTMETRICS_EXECUTION_AUTHORIZED=1\nFOO=bar\n", encoding="utf-8"
     )
-    # Run inline by importing after path setup
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
+    env["PYTHONPATH"] = f"{ROOT / 'quantbridge' / 'src'}:{ROOT}"
     proc = subprocess.run(
         [
             sys.executable,
@@ -243,13 +253,10 @@ def test_n10b_orchestrator_env_refuses_gate_keys(tmp_path):
                 f"""
                 import sys
                 from pathlib import Path
-                sys.path.insert(0, {str(ROOT)!r})
-                # Load module file directly for _bootstrap_env
                 import importlib.util
                 path = Path({str(ROOT)!r}) / "quantmetrics_os/orchestrator/quantmetrics.py"
                 spec = importlib.util.spec_from_file_location("qm_orch", path)
                 mod = importlib.util.module_from_spec(spec)
-                # Provide directory override via monkeypatch after load
                 spec.loader.exec_module(mod)
                 mod._ORCHESTRATOR_DIR = Path({str(orch)!r})
                 try:
@@ -269,18 +276,28 @@ def test_n10b_orchestrator_env_refuses_gate_keys(tmp_path):
     assert "EXIT 2" in proc.stdout, proc.stdout + proc.stderr
 
 
-def test_n10c_run_live_sh_refuses_gate_keys(tmp_path):
+@pytest.mark.parametrize(
+    "body",
+    [
+        "QUANTMETRICS_EXECUTION_AUTHORIZED=1\n",
+        "export QUANTMETRICS_EXECUTION_AUTHORIZED=1\n",
+        "true; QUANTMETRICS_EXECUTION_AUTHORIZED=1\n",
+        "declare -x QUANTMETRICS_EXECUTION_AUTHORIZED=1\n",
+    ],
+)
+def test_n10c_run_live_sh_snapshot_denies_gate_mutation(tmp_path, body):
     env_file = tmp_path / "orch.env"
-    env_file.write_text("QUANTMETRICS_EXECUTION_AUTHORIZED=1\n", encoding="utf-8")
+    env_file.write_text(body, encoding="utf-8")
     stub_py = tmp_path / "stub_python"
     stub_py.write_text("#!/bin/sh\necho STUB_RAN\nexit 0\n", encoding="utf-8")
     stub_py.chmod(0o755)
     script = ROOT / "quantbuild/scripts/vps/run_live.sh"
+    clean = {k: v for k, v in os.environ.items() if k not in GATE_ENV_KEYS}
     proc = subprocess.run(
         ["bash", str(script), "live", "--dry-run"],
         cwd=str(ROOT / "quantbuild"),
         env={
-            **os.environ,
+            **clean,
             "QUANTBUILD_ROOT": str(ROOT / "quantbuild"),
             "QUANTBUILD_ORCHESTRATOR_ENV": str(env_file),
             "PYTHON": str(stub_py),
@@ -289,50 +306,35 @@ def test_n10c_run_live_sh_refuses_gate_keys(tmp_path):
         text=True,
         check=False,
     )
-    assert proc.returncode != 0
+    assert proc.returncode == 2
     assert "STUB_RAN" not in proc.stdout
-    assert "gate key" in proc.stderr.lower() or "refuse" in proc.stderr.lower()
+    assert "mutated gate keys" in proc.stderr.lower() or "refuse" in proc.stderr.lower()
 
 
-def test_n10d_bridge_local_env_gate_key_denies_hydrate(tmp_path, monkeypatch):
-    """R1/d: bridge local.env with gate keys denies before real-client hydration."""
+def test_n10d_behavioral_hydrate_real_method(tmp_path):
+    """B2: invoke real CTraderBroker._hydrate_credentials_from_dotenv and deny."""
     bridge_root = tmp_path / "quantbridge"
     bridge_root.mkdir()
     (bridge_root / "local.env").write_text(
-        "QUANTMETRICS_ALLOWED_ACCOUNT_IDS=123\nCTRADER_ACCOUNT_ID=999\n",
+        "export QUANTMETRICS_ALLOWED_ACCOUNT_IDS=123\nCTRADER_ACCOUNT_ID=99999999\n",
         encoding="utf-8",
     )
-    # Exercise the same deny path as broker_ctrader._hydrate_credentials_from_dotenv
-    # without importing the full QuantBuild config stack (yaml optional in root CI).
-    from quantbridge.safety.live_execution_gate import (
-        LiveExecutionDenied,
-        default_bridge_env_files,
-        env_file_contains_gate_keys,
-    )
+    # Ensure imports resolve
+    sys.path.insert(0, str(ROOT / "quantbridge" / "src"))
+    sys.path.insert(0, str(ROOT / "quantbuild" / "src"))
+    sys.path.insert(0, str(ROOT / "quantbuild"))
+    from src.quantbuild.execution.broker_ctrader import CTraderBroker
 
-    hits = [
-        p for p in default_bridge_env_files(root=bridge_root) if env_file_contains_gate_keys(p)
-    ]
-    assert hits, "expected local.env gate-key detection"
-    with pytest.raises(LiveExecutionDenied):
-        assert_live_execution_allowed(
-            LiveExecutionRequest("ctrader", "demo", "12345678", "SESSION"),
-            environ=_allowed_demo(),
-            env_file_paths=hits,
-        )
-
-    # Bind-check the broker hydrate path still references the gate helpers.
-    broker_src = (
-        ROOT / "quantbuild/src/quantbuild/execution/broker_ctrader.py"
-    ).read_text(encoding="utf-8")
-    assert "env_file_contains_gate_keys" in broker_src
-    assert "gate_key_present_in_env_file" in broker_src
+    broker = CTraderBroker(account_id="", access_token="x" * 40, mock_mode=True)
+    with pytest.raises((LiveExecutionDenied, RuntimeError)) as exc:
+        broker._hydrate_credentials_from_dotenv(bridge_root)
+    msg = str(exc.value).lower()
+    assert "gate_key" in msg or "liveexecutiondenied" in type(exc.value).__name__.lower()
 
 
 def test_n10e_c1_openapi_connect_and_close_deny_with_local_env(tmp_path, monkeypatch):
-    """C1: direct OpenAPI client denies when bridge local.env has gate keys (no QB)."""
     local_env = tmp_path / "local.env"
-    local_env.write_text("QUANTMETRICS_EXECUTION_AUTHORIZED=1\n", encoding="utf-8")
+    local_env.write_text("export QUANTMETRICS_EXECUTION_AUTHORIZED=1\n", encoding="utf-8")
     from quantbridge.execution.clients.ctrader_openapi_client import CTraderOpenApiClient
 
     client = CTraderOpenApiClient(
@@ -344,7 +346,6 @@ def test_n10e_c1_openapi_connect_and_close_deny_with_local_env(tmp_path, monkeyp
         "quantbridge.safety.live_execution_gate.default_bridge_env_files",
         lambda root=None: [local_env],
     )
-    # Even with process auth present, local.env gate key must deny (C1).
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_ACCOUNT_IDS", "12345678")
     monkeypatch.setenv("QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS", "demo")
     monkeypatch.setenv("QUANTMETRICS_EXECUTION_AUTHORIZED", "1")
@@ -363,7 +364,6 @@ def test_n10e_c1_openapi_connect_and_close_deny_with_local_env(tmp_path, monkeyp
     with pytest.raises(LiveExecutionDenied):
         client.connect()
     assert client_ctor_calls == []
-
     with pytest.raises(LiveExecutionDenied):
         client.close_trade("1")
     assert client_ctor_calls == []
@@ -389,3 +389,33 @@ def test_n12_gate_import_failure_denies_oanda(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         mod._oanda_gate("SESSION", environment="practice", account_id="001")
     assert "gate_import_failed" in str(exc.value)
+
+
+def test_b2_explicit_empty_env_allowlist_denies():
+    environ = _env(
+        QUANTMETRICS_EXECUTION_AUTHORIZED="1",
+        QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678",
+        QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS="",
+    )
+    with pytest.raises(LiveExecutionDenied) as exc:
+        assert_live_execution_allowed(
+            LiveExecutionRequest("ctrader", "demo", "12345678", "ORDERS"),
+            environ=environ,
+            env_file_paths=[],
+        )
+    assert "environment_not_allowlisted" in str(exc.value)
+
+
+def test_b2_ctrader_practice_denied_even_if_allowlisted():
+    environ = _env(
+        QUANTMETRICS_EXECUTION_AUTHORIZED="1",
+        QUANTMETRICS_ALLOWED_ACCOUNT_IDS="12345678",
+        QUANTMETRICS_ALLOWED_BROKER_ENVIRONMENTS="demo,practice",
+    )
+    with pytest.raises(LiveExecutionDenied) as exc:
+        assert_live_execution_allowed(
+            LiveExecutionRequest("ctrader", "practice", "12345678", "SESSION"),
+            environ=environ,
+            env_file_paths=[],
+        )
+    assert "ctrader_practice_environment_rejected" in str(exc.value)

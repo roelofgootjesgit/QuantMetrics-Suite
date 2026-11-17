@@ -10,7 +10,11 @@ from quantbridge.safety.live_execution_gate import (
     canonicalize_oanda_account_id,
     default_bridge_env_files,
     env_file_contains_gate_keys,
+    gate_keys_changed,
+    load_dotenv_refusing_gate_keys,
     resolve_ctrader_host,
+    restore_gate_keys,
+    snapshot_gate_keys,
 )
 
 __all__ = [
@@ -23,5 +27,9 @@ __all__ = [
     "canonicalize_oanda_account_id",
     "default_bridge_env_files",
     "env_file_contains_gate_keys",
+    "gate_keys_changed",
+    "load_dotenv_refusing_gate_keys",
     "resolve_ctrader_host",
+    "restore_gate_keys",
+    "snapshot_gate_keys",
 ]

@@ -16,8 +16,8 @@ def _ensure_quantbridge_on_path() -> None:
 
 
 def _bootstrap_dotenv() -> None:
-    """Load dotenv only after refusing gate keys in the exact find_dotenv path (C2/P1)."""
-    from dotenv import find_dotenv, load_dotenv
+    """Load exact find_dotenv path with dotenv_values gate-key refuse + snapshot (B1/C2)."""
+    from dotenv import find_dotenv
 
     _ensure_quantbridge_on_path()
     dotenv_path = find_dotenv(usecwd=True)
@@ -26,16 +26,15 @@ def _bootstrap_dotenv() -> None:
     try:
         from quantbridge.safety.live_execution_gate import (
             LiveExecutionDenied,
-            assert_dotenv_path_has_no_gate_keys,
+            load_dotenv_refusing_gate_keys,
         )
     except ImportError as exc:
         raise RuntimeError(f"LiveExecutionDenied: gate_import_failed: {exc}") from exc
 
     try:
-        assert_dotenv_path_has_no_gate_keys(dotenv_path)
+        load_dotenv_refusing_gate_keys(dotenv_path, override=True)
     except LiveExecutionDenied:
         raise
-    load_dotenv(dotenv_path, override=True)
 
 
 _bootstrap_dotenv()
