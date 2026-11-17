@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from quantresearch.paths import repo_root
 from quantresearch.preregistration import (
     load_preregistration,
@@ -15,12 +17,71 @@ def test_hyp002_preregistration_file_validates_with_pipeline_run_time():
     assert validate_preregistration_v1(data, run_start_utc="2026-05-03T18:42:39.640992Z") == []
 
 
-def test_hyp003_preregistration_file_validates_before_first_run():
+def test_hyp003_preregistration_file_locked_before_run_with_recorded_start():
+    """Historical hyp003 JSON: locked before run, then recorded run_start_utc (do not edit file)."""
     p = repo_root() / "pipelines" / "hyp003_preregistration.json"
     data = load_preregistration(p)
     assert data.get("pre_registration_status") == "locked_before_run"
-    assert data.get("run_start_utc") is None
-    assert validate_preregistration_v1(data, run_start_utc=None) == []
+    assert data.get("run_start_utc")
+    run_start = str(data["run_start_utc"])
+    assert validate_temporal_integrity(data, run_start) is True
+    assert validate_preregistration_v1(data, run_start_utc=run_start) == []
+
+
+def _minimal_locked_prereg(**overrides):
+    d = {
+        "version": 1,
+        "hypothesis_id": "HYP-003-TMP",
+        "pre_registration_timestamp_utc": "2026-05-04T09:00:00Z",
+        "pre_registration_status": "locked_before_run",
+        "pre_registration_valid": True,
+        "note": "tmp fixture",
+        "null_hypothesis_H0": "h0",
+        "alternative_hypothesis_H1": "h1",
+        "alpha": 0.05,
+        "minimum_n": 100,
+        "minimum_effect_size_r": 0.01,
+        "test_plan_summary": "tmp",
+        "locked_at_utc": "2026-05-04T09:00:00Z",
+        "run_start_utc": None,
+    }
+    d.update(overrides)
+    return d
+
+
+def test_hyp003_style_pre_run_tmp_null_run_start_validates():
+    """True pre-run copy: locked_before_run with null run_start_utc (tmp only)."""
+    d = _minimal_locked_prereg(run_start_utc=None)
+    assert validate_preregistration_v1(d, run_start_utc=None) == []
+
+
+def _assert_negative_run_before_lock(data: dict, run_start: str) -> None:
+    """Negative contract: run started before lock must fail temporal checks."""
+    assert validate_temporal_integrity(data, run_start) is False
+    errs = validate_preregistration_v1(data, run_start_utc=run_start)
+    assert any("temporal integrity" in e for e in errs), errs
+
+
+def test_hyp003_style_negative_tmp_run_before_lock_rejected():
+    """Negative tmp: run_start before locked_at → temporal integrity false + v1 errors."""
+    d = _minimal_locked_prereg(
+        locked_at_utc="2026-05-04T12:00:00Z",
+        run_start_utc="2026-05-04T10:00:00Z",
+    )
+    _assert_negative_run_before_lock(d, "2026-05-04T10:00:00Z")
+
+
+def test_mutation_validate_temporal_integrity_always_true_killed(monkeypatch):
+    """Mutant: validate_temporal_integrity → always True must fail the negative contract."""
+    import quantresearch.preregistration as preg
+
+    d = _minimal_locked_prereg(
+        locked_at_utc="2026-05-04T12:00:00Z",
+        run_start_utc="2026-05-04T10:00:00Z",
+    )
+    monkeypatch.setattr(preg, "validate_temporal_integrity", lambda *a, **k: True)
+    with pytest.raises(AssertionError):
+        _assert_negative_run_before_lock(d, "2026-05-04T10:00:00Z")
 
 
 def test_validate_temporal_integrity_true_when_lock_before_run():

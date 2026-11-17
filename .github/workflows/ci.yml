@@ -33,7 +33,7 @@ jobs:
       - name: Run deterministic demo
         run: python run_demo.py
 
-      # Issue #106 — offline module suites (P1–P3). QuantResearch deferred (V3).
+      # Issue #106 / #119 — offline module suites (P1–P3 + QuantResearch Impl-B).
       - name: Run quantanalytics tests (offline socket guard)
         run: pytest quantanalytics/tests -q --disable-socket --allow-unix-socket
 
@@ -43,3 +43,6 @@ jobs:
 
       - name: Run quantbuild tests (offline socket guard)
         run: pytest quantbuild/tests -q --disable-socket --allow-unix-socket
+
+      - name: Run quantresearch tests (offline socket guard)
+        run: pytest quantresearch/tests -q --disable-socket --allow-unix-socket

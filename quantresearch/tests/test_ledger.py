@@ -11,16 +11,116 @@ from quantresearch.ledger import (
 )
 
 
-def test_validate_throughput_discovery_experiment():
-    eid = "EXP-2021-2025-throughput-discovery-v1"
-    errs = validate_experiment(eid)
-    assert errs == [], errs
+def _write_completed_synthetic_experiment(
+    tmp_path,
+    monkeypatch,
+    *,
+    eid: str,
+    suite_root,
+    quantos_rel: str = "quantmetrics_os/runs/SYN-RUN",
+    create_artifacts: bool = True,
+):
+    """Build a minimal completed experiment under tmp experiments_dir (O1 synthetic)."""
+    exp_root = tmp_path / "experiments"
+    monkeypatch.setattr("quantresearch.ledger.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("quantresearch.ledger.experiments_dir", lambda: exp_root)
+    exp_root.mkdir(parents=True, exist_ok=True)
+    exp_dir = exp_root / eid
+    exp_dir.mkdir(parents=True)
+    (exp_dir / "hypothesis.md").write_text("# H\n", encoding="utf-8")
+    (exp_dir / "experiment_plan.md").write_text("# Plan\n", encoding="utf-8")
+    (exp_dir / "decision.md").write_text(
+        "# Decision\n\n## Final Decision\n\nVALIDATION_REQUIRED\n",
+        encoding="utf-8",
+    )
+    suite_payload: dict = {}
+    if suite_root is not None:
+        suite_payload = {"suite_root": str(suite_root)}
+    (exp_dir / "experiment.json").write_text(
+        json.dumps(
+            {
+                "experiment_id": eid,
+                "title": "synthetic ledger",
+                "status": "completed",
+                "created_at_utc": "2026-01-01T00:00:00Z",
+                "completed_at_utc": "2026-01-02T00:00:00Z",
+                "matrix_type": "throughput-discovery",
+                "hypothesis_summary": "synthetic",
+                "primary_metric": "expectancy_R",
+                "secondary_metrics": [],
+                "promotion_decision": "VALIDATION_REQUIRED",
+                "discovery_tier": "watchlist",
+                "next_action": "none",
+                "canonical_artifact_path": quantos_rel,
+                "suite": suite_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (exp_dir / "links.json").write_text(
+        json.dumps({"quantos_run_dir": quantos_rel}),
+        encoding="utf-8",
+    )
+    if create_artifacts and suite_root is not None:
+        run_dir = Path(suite_root) / quantos_rel
+        run_dir.mkdir(parents=True, exist_ok=True)
+    return eid
 
 
-def test_validate_session_watchlist_experiment():
-    eid = "EXP-2021-2025-session-relax-watchlist-v1"
+def test_validate_synthetic_completed_experiment_with_suite_root(tmp_path, monkeypatch):
+    """O1: validator logic via tmp synthetic fixtures — not real EXP-2021-2025 records."""
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    eid = _write_completed_synthetic_experiment(
+        tmp_path, monkeypatch, eid="EXP-SYN-LEDGER-OK", suite_root=suite
+    )
+    assert validate_experiment(eid) == []
+
+
+def test_validate_synthetic_session_style_completed_experiment(tmp_path, monkeypatch):
+    """Second synthetic completed layout (session/watchlist-shaped metadata)."""
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    eid = _write_completed_synthetic_experiment(
+        tmp_path,
+        monkeypatch,
+        eid="EXP-SYN-SESSION-OK",
+        suite_root=suite,
+        quantos_rel="quantmetrics_os/runs/SYN-SESSION",
+    )
+    assert validate_experiment(eid) == []
+
+
+def test_validate_fail_closed_missing_suite_root(tmp_path, monkeypatch):
+    """O1 fail-closed: missing suite.suite_root on completed experiment."""
+    eid = _write_completed_synthetic_experiment(
+        tmp_path,
+        monkeypatch,
+        eid="EXP-SYN-NO-SUITE",
+        suite_root=None,
+        create_artifacts=False,
+    )
+    # Empty suite object / missing root
+    exp_dir = tmp_path / "experiments" / eid
+    payload = json.loads((exp_dir / "experiment.json").read_text(encoding="utf-8"))
+    payload["suite"] = {}
+    (exp_dir / "experiment.json").write_text(json.dumps(payload), encoding="utf-8")
     errs = validate_experiment(eid)
-    assert errs == [], errs
+    assert any("suite.suite_root missing or invalid" in e for e in errs), errs
+
+
+def test_validate_fail_closed_windows_suite_root(tmp_path, monkeypatch):
+    """O1 fail-closed: non-existent Windows-style suite_root cannot verify artifacts."""
+    win_root = "C:/Users/Gebruiker/quantmetrics-suite-does-not-exist"
+    eid = _write_completed_synthetic_experiment(
+        tmp_path,
+        monkeypatch,
+        eid="EXP-SYN-WIN-SUITE",
+        suite_root=win_root,
+        create_artifacts=False,
+    )
+    errs = validate_experiment(eid)
+    assert any("suite.suite_root missing or invalid" in e for e in errs), errs
 
 
 def test_pre_run_accepts_planned_without_post_run_artifacts(tmp_path, monkeypatch):

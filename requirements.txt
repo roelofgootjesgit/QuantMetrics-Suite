@@ -1,6 +1,7 @@
 -e ./quantbuild
 -e ./quantlog
 -e ./quantanalytics
+-e ./quantresearch
 python-dotenv>=1.0
 pyyaml>=6.0
 # Test/CI-only extras (pytest, pydantic, filelock, httpx, pytest-socket) live in
