@@ -3,7 +3,7 @@
 **Draft PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/120  
 **Branch:** `cursor/issue-103-delete-allowed-plan-3716`  
 **Prior head (REQUEST CHANGES):** `e5352f97e858dfe4f3e7bdd7f1f5a3c3a6eb21b3`  
-**R1 head:** *(CI green after push)*  
+**R1 head (CI green):** `1996569763e2116ed36eb6378842760ce18af57d`  
 **Scope:** tests only — `tests/test_data_lifecycle_delete_allowed.py`  
 **Stop:** **READY FOR CLAUDE R1 DIFF RECHECK #103**
 
@@ -26,7 +26,10 @@ No production code, workflow, reports, skip/xfail.
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
-| *(fill after push)* | | tip | pending |
+| push | [44156886305](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44156886305) | `1996569…` | **success** |
+| pull_request | [44156900028](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44156900028) | `1996569…` | **success** |
+
+CI job: **156** / **64** / **43** / demo / modules green.
 
 ## Stop
 
