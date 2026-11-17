@@ -2,10 +2,11 @@
 
 **PR:** https://github.com/roelofgootjesgit/QuantMetrics-Suite/pull/116 (draft)  
 **Branch:** `cursor/issue-104-pr-b-entrypoints-3716`  
-**Head:** `62941e4541b943a68faab4e90936e67c28d90ec8`  
+**Code head (CI green):** `62941e4541b943a68faab4e90936e67c28d90ec8`  
+**Branch tip (this evidence MD):** verify with PR head / `git rev-parse HEAD`  
 **Base:** `main` at/after `4a2ea7eba0cf393b246fc33203a5c956398ed5b0` (PR-A #115 merged)  
-**Brief:** issue #104 comment PR-B implementation brief  
-**Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5/7/9/11  
+**Brief:** issue #104 — PR-B implementation brief (2026-11-17)  
+**Plan:** `docs/plans/ISSUE_104_FAIL_CLOSED_LIVE_SAFETY_PLAN.md` §§5 / 7 / 9 / 11  
 
 ---
 
@@ -21,16 +22,18 @@ Fail-closed **entrypoint / script** preflights that reuse the canonical QuantBri
 
 | # | Entrypoint | Intent | File |
 |---|---|---|---|
-| 4 | Bridge `CTraderBroker(mode=openapi)` before OpenAPI client | SESSION | `quantbridge/.../brokers/ctrader_broker.py` |
-| 7 | `create_broker` non-mock / Oanda + `validate_suite_layout` | SESSION | `quantbuild/.../broker_factory.py` |
-| — | QB `CTraderBroker._init_real_bridge` early deny | SESSION | `quantbuild/.../broker_ctrader.py` |
-| 8 | `LiveRunner.run` when `dry_run=False` before connect | ORDERS | `quantbuild/.../live_runner.py` |
-| 9 | `app.py` `live --real` before `LiveRunner` | ORDERS | `quantbuild/.../app.py` |
+| 4 | Bridge `CTraderBroker(mode=openapi)` before OpenAPI client | SESSION | `quantbridge/src/quantbridge/execution/brokers/ctrader_broker.py` |
+| 7 | `create_broker` non-mock / Oanda + `validate_suite_layout` | SESSION | `quantbuild/src/quantbuild/execution/broker_factory.py` |
+| — | QB `CTraderBroker._init_real_bridge` early deny | SESSION | `quantbuild/src/quantbuild/execution/broker_ctrader.py` |
+| 8 | `LiveRunner.run` when `dry_run=False` before connect | ORDERS | `quantbuild/src/quantbuild/execution/live_runner.py` |
+| 9 | `app.py` `live --real` before `LiveRunner` | ORDERS | `quantbuild/src/quantbuild/app.py` |
 | 10 | `launch_live_safe` before recovery/Popen `--real` | ORDERS | `quantbuild/scripts/launch_live_safe.py` |
 | 11 | Orchestrator `build --real` before subprocess spawn | ORDERS | `quantmetrics_os/orchestrator/quantmetrics.py` |
-| 12 | Smoke / lifecycle / runtime_control / diagnose | SESSION/ORDERS | scripts under `quantbuild/` + `quantbridge/` |
+| 12 | Smoke / lifecycle / runtime_control / diagnose | SESSION/ORDERS | `quantbuild/scripts/*`, `quantbridge/scripts/*` |
 
-Helper (no policy copy): `quantbuild/.../live_execution_preflight.py`.
+Helper (no policy copy): `quantbuild/src/quantbuild/execution/live_execution_preflight.py`.
+
+Bridge script env loaders refuse gate keys (`ctrader_smoke`, `run_order_lifecycle_check`, `run_runtime_control`).
 
 ---
 
@@ -40,23 +43,38 @@ Helper (no policy copy): `quantbuild/.../live_execution_preflight.py`.
 pytest tests -q
 # → 84 passed
 
-pytest tests/test_live_execution_gate_e.py tests/test_live_execution_gate_e_mutation.py -q
-# → 15 passed
+pytest tests/test_live_execution_gate_n.py \
+        tests/test_live_execution_gate_w.py \
+        tests/test_live_execution_gate_mutation.py -q
+# → 64 passed (PR-A suite)
 
-pytest tests/test_live_execution_gate_n.py tests/test_live_execution_gate_w.py tests/test_live_execution_gate_mutation.py -q
-# → (PR-A suite still green; included in full 84)
+pytest tests/test_live_execution_gate_e.py \
+        tests/test_live_execution_gate_e_mutation.py -q
+# → 15 passed (PR-B suite)
 
 python run_demo.py
 # → Verdict: VALIDATION_REQUIRED (0 errors)
 ```
 
+---
+
 ## CI evidence
 
 | Trigger | Run | Head | Conclusion |
 |---|---|---|---|
+| push (code) | [44121088150](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44121088150) | `62941e4…` | **success** |
 | pull_request | [44121121750](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44121121750) | `62941e4…` | **success** |
+| push (docs) | [44121327853](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44121327853) | tip after evidence MD | **success** |
+| pull_request | [44121344348](https://github.com/roelofgootjesgit/QuantMetrics-Suite/actions/runs/44121344348) | tip after evidence MD | **success** |
 
-Job `test-and-demo`: root tests + PR-A gate suite + PR-B E suite + demo — all green.
+Job `test-and-demo` on code head `62941e4`:
+
+| Step | Result |
+|---|---|
+| Run tests (`pytest tests -q`) | **84 passed** |
+| Run issue #104 N/W/mutation | **64 passed** |
+| Run issue #104 PR-B E + mutation | **15 passed** |
+| Run deterministic demo | `VALIDATION_REQUIRED` |
 
 ---
 
@@ -78,7 +96,7 @@ Job `test-and-demo`: root tests + PR-A gate suite + PR-B E suite + demo — all 
 
 ---
 
-## Mutation table (scratch copies — KILLED)
+## Mutation table (scratch copies — all KILLED)
 
 | Mutation | Result |
 |---|---|
@@ -86,6 +104,28 @@ Job `test-and-demo`: root tests + PR-A gate suite + PR-B E suite + demo — all 
 | Remove `create_broker` non-mock SESSION preflight | **KILLED** |
 | Remove bridge openapi SESSION `assert_live_execution_allowed` | **KILLED** |
 | Remove `launch_live_safe` ORDERS `preflight_live_execution` | **KILLED** |
+
+---
+
+## Changed files
+
+- `quantbuild/src/quantbuild/execution/live_execution_preflight.py` (new)
+- `quantbuild/src/quantbuild/execution/broker_factory.py`
+- `quantbuild/src/quantbuild/execution/broker_ctrader.py`
+- `quantbuild/src/quantbuild/execution/live_runner.py`
+- `quantbuild/src/quantbuild/app.py`
+- `quantbuild/scripts/launch_live_safe.py`
+- `quantbuild/scripts/ctrader_smoke.py`
+- `quantbuild/scripts/diagnose_ctrader_connect.py`
+- `quantbridge/src/quantbridge/execution/brokers/ctrader_broker.py`
+- `quantbridge/scripts/ctrader_smoke.py`
+- `quantbridge/scripts/run_order_lifecycle_check.py`
+- `quantbridge/scripts/run_runtime_control.py`
+- `quantmetrics_os/orchestrator/quantmetrics.py`
+- `tests/test_live_execution_gate_e.py` (new)
+- `tests/test_live_execution_gate_e_mutation.py` (new)
+- `.github/workflows/ci.yml`
+- `docs/plans/ISSUE_104_PR_B_ENTRYPOINTS.md` (this file)
 
 ---
 
@@ -109,5 +149,7 @@ Job `test-and-demo`: root tests + PR-A gate suite + PR-B E suite + demo — all 
 
 ## Next step
 
-Independent Claude CODE review on the **exact PR-B head SHA**.  
-Max 2 repair rounds; then STOP & REDESIGN.
+Independent Claude CODE review on the **exact PR #116 head SHA** at review time  
+(code repair `62941e4` + this evidence MD on the same branch).
+
+Max 2 repair rounds; then **STOP & REDESIGN**.
