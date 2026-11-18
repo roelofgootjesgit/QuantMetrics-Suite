@@ -93,7 +93,10 @@ def test_fetch_yfinance_does_not_use_bare_tz_localize_none() -> None:
 
 
 def test_fetch_dukascopy_and_normalize_use_canonicalize() -> None:
-    assert "canonicalize_index_utc_naive" in inspect.getsource(parquet_loader._fetch_dukascopy)
+    assert "canonicalize_index_utc_naive" in inspect.getsource(
+        parquet_loader._prepare_dukascopy_frame_index
+    )
+    assert "_prepare_dukascopy_frame_index" in inspect.getsource(parquet_loader._fetch_dukascopy)
     assert "canonicalize_index_utc_naive" in inspect.getsource(parquet_loader._normalize_ohlcv_frame)
 
 
