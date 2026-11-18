@@ -18,3 +18,8 @@ httpx>=0.27
 
 # Offline CI guard (V2): block real TCP/IP sockets in module suites.
 pytest-socket>=0.7.0
+
+# DATA-002 I0 / #133: Parquet engine for root CI (no importorskip).
+# Align floor with quantbuild/requirements.txt; root editable install does not
+# pull that file, so root test-and-demo must pin pyarrow here.
+pyarrow>=14.0.1
