@@ -11,16 +11,56 @@ Data source priority:
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import pandas as pd
 
+from src.quantbuild.io.provenance_cache import (
+    ProvenanceDenyError,
+    ProvenanceError,
+    ProvenanceIdentityError,
+    load_sidecar_fail_closed,
+    parquet_path_for,
+    write_parquet_atomic_with_sidecar,
+)
 from src.quantbuild.io.timezone_canon import (
     UnverifiedNaiveTimezoneError,
     canonicalize_index_utc_naive,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _writer_provenance(
+    *,
+    symbol: str,
+    timeframe: str,
+    source: str,
+    offer_side: str,
+    instrument: Optional[str] = None,
+) -> dict[str, Any]:
+    """Writer-belief provenance only — not owner DTA / vendor attestation."""
+    sym = symbol.upper()
+    if instrument is None:
+        if source == "yfinance" and sym == "XAUUSD":
+            instrument = "gc_f_futures"
+        elif sym == "XAUUSD":
+            instrument = "spot_xauusd"
+        else:
+            instrument = "other"
+    return {
+        "symbol": sym,
+        "instrument": instrument,
+        "timeframe": timeframe,
+        "source": source,
+        "single_source": True,
+        "offer_side": offer_side,
+        # Unverified until owner DTA — do not claim proved naive_utc.
+        "timezone_storage": "unknown",
+        "index_semantics": "unknown",
+        "writer": f"quantbuild.parquet_loader:{source}",
+        "schema_version": "data002-i2-v1",
+    }
 
 
 def _resolve_source_order(source: str) -> tuple[str, list[str]]:
@@ -50,7 +90,7 @@ def _tag_source(df: pd.DataFrame, requested: str, actual: str) -> pd.DataFrame:
 
 
 def path_for(base_path: Path, symbol: str, timeframe: str) -> Path:
-    return Path(base_path) / symbol.upper() / f"{timeframe}.parquet"
+    return parquet_path_for(base_path, symbol, timeframe)
 
 
 def load_parquet(
@@ -59,10 +99,24 @@ def load_parquet(
     timeframe: str,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
+    *,
+    require_htf_owner_dta: bool = False,
 ) -> pd.DataFrame:
+    """Load cache fail-closed: missing parquet → empty; present without valid sidecar → DENY.
+
+    Does **not** move/copy/delete cache files on DENY (read-only).
+    """
     p = path_for(base_path, symbol, timeframe)
     if not p.exists():
         return pd.DataFrame()
+
+    # Fail closed on absent/mismatched sidecar (incl. crash gap). No silent recovery.
+    load_sidecar_fail_closed(
+        base_path,
+        symbol,
+        timeframe,
+        require_htf_owner_dta=require_htf_owner_dta,
+    )
 
     df = pd.read_parquet(p)
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -87,14 +141,37 @@ def load_parquet(
     return df
 
 
-def save_parquet(base_path: Path, symbol: str, timeframe: str, data: pd.DataFrame) -> None:
-    p = path_for(base_path, symbol, timeframe)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    if not isinstance(data.index, pd.DatetimeIndex) and "timestamp" in data.columns:
-        data = data.set_index("timestamp")
-    data.index = pd.to_datetime(data.index)
-    data = data.sort_index()
-    data.to_parquet(p, compression="snappy")
+def save_parquet(
+    base_path: Path,
+    symbol: str,
+    timeframe: str,
+    data: pd.DataFrame,
+    *,
+    provenance: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Atomic parquet + sidecar write. ``provenance`` identity fields are required."""
+    if provenance is None:
+        raise ProvenanceError(
+            "save_parquet requires provenance mapping (DATA-002 I2); "
+            "refusing sidecar-less cache write"
+        )
+
+    frame = data.copy()
+    if not isinstance(frame.index, pd.DatetimeIndex) and "timestamp" in frame.columns:
+        frame = frame.set_index("timestamp")
+    frame.index = pd.to_datetime(frame.index)
+    frame = frame.sort_index()
+
+    def _write_tmp(tmp_path: Path) -> None:
+        frame.to_parquet(tmp_path, compression="snappy")
+
+    return write_parquet_atomic_with_sidecar(
+        base_path=Path(base_path),
+        symbol=symbol,
+        timeframe=timeframe,
+        frame_writer=_write_tmp,
+        provenance=provenance,
+    )
 
 
 def _get_dukascopy_instrument(symbol: str):
@@ -171,21 +248,36 @@ def _fetch_dukascopy(
     if df is None or df.empty:
         return pd.DataFrame()
 
-    if not isinstance(df.index, pd.DatetimeIndex):
-        if "timestamp" in df.columns:
-            df = df.set_index("timestamp")
-        # Do not pass utc=True: that silently assumes naive==UTC (UNVERIFIED for Dukascopy).
-        df.index = pd.to_datetime(df.index)
-
-    # Aware → UTC-naive via tz_convert; naive without verified contract → DENY.
-    # Does not attest Dukascopy vendor TZ / open-close semantics (DTA still UNVERIFIED).
-    df.index = canonicalize_index_utc_naive(df.index, source="dukascopy")
+    try:
+        df = _prepare_dukascopy_frame_index(df)
+    except UnverifiedNaiveTimezoneError:
+        return pd.DataFrame()
 
     df = df.sort_index()
     for col in ("open", "high", "low", "close", "volume"):
         if col not in df.columns:
             return pd.DataFrame()
     return df[["open", "high", "low", "close", "volume"]]
+
+
+def _prepare_dukascopy_frame_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize Dukascopy frame index without assuming naive timestamps are UTC.
+
+    Non-DatetimeIndex frames may carry a naive ``time`` / ``timestamp`` column.
+    Do not coerce naive values as UTC on parse; canonicalize fails closed instead.
+    Vendor Dukascopy TZ / open-close semantics remain UNVERIFIED.
+    """
+    out = df.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        for col in ("timestamp", "time", "datetime", "date"):
+            if col in out.columns:
+                out = out.set_index(col)
+                break
+        # Intentionally omit UTC coercion on parse (naive remains naive → DENY).
+        out.index = pd.to_datetime(out.index)
+
+    out.index = canonicalize_index_utc_naive(out.index, source="dukascopy")
+    return out
 
 
 def _normalize_ohlcv_frame(data: Any) -> pd.DataFrame:
@@ -322,13 +414,26 @@ def ensure_data(
     end = datetime.now()
     start = end - timedelta(days=period_days)
     base_path = Path(base_path)
-    existing = load_parquet(base_path, symbol, timeframe, start=start, end=end)
+    # Read-only DENY: invalid sidecar → treat as missing; never quarantine/move/delete.
+    try:
+        existing = load_parquet(base_path, symbol, timeframe, start=start, end=end)
+    except ProvenanceDenyError as exc:
+        logger.warning(
+            "ensure_data_provenance_deny symbol=%s timeframe=%s reason=%s (cache untouched)",
+            symbol, timeframe, exc,
+        )
+        existing = pd.DataFrame()
 
     if len(existing) > 100:
         return existing
 
     source_requested, source_order = _resolve_source_order(source)
     failure_reasons: list[str] = []
+    offer_side_by_provider = {
+        "dukascopy": "bid",
+        "ctrader": "unknown",
+        "yfinance": "unknown",
+    }
 
     for provider in source_order:
         try:
@@ -336,10 +441,16 @@ def ensure_data(
                 "data_fetch_attempt requested=%s provider=%s symbol=%s timeframe=%s min_rows=100",
                 source_requested, provider, symbol, timeframe,
             )
+            provenance = _writer_provenance(
+                symbol=symbol,
+                timeframe=timeframe,
+                source=provider,
+                offer_side=offer_side_by_provider.get(provider, "unknown"),
+            )
             if provider == "ctrader":
                 data = _fetch_ctrader(broker, symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    save_parquet(base_path, symbol, timeframe, data, provenance=provenance)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -351,7 +462,7 @@ def ensure_data(
             elif provider == "dukascopy":
                 data = _fetch_dukascopy(symbol, timeframe, start, end)
                 if not data.empty and len(data) >= 100:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    save_parquet(base_path, symbol, timeframe, data, provenance=provenance)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -363,7 +474,7 @@ def ensure_data(
             elif provider == "yfinance":
                 data = _fetch_yfinance(symbol, timeframe, period_days)
                 if not data.empty:
-                    save_parquet(base_path, symbol, timeframe, data)
+                    save_parquet(base_path, symbol, timeframe, data, provenance=provenance)
                     first_ts, last_ts = _frame_range_text(data)
                     logger.info(
                         "data_fetch_success requested=%s actual=%s symbol=%s timeframe=%s rows=%d "
@@ -372,6 +483,8 @@ def ensure_data(
                     )
                     return load_parquet(base_path, symbol, timeframe, start=start, end=end)
                 failure_reasons.append(f"{provider}: rows=0")
+        except (ProvenanceIdentityError, ProvenanceDenyError, ProvenanceError) as e:
+            failure_reasons.append(f"{provider}: provenance:{e}")
         except Exception as e:
             failure_reasons.append(f"{provider}: {e}")
 
@@ -415,7 +528,14 @@ def ensure_live_data(
     period_days = max(10, int(min_bars / max(effective_bars_per_day, 1.0)) + 5)
     start = now - timedelta(days=period_days)
 
-    existing = load_parquet(base_path, symbol, timeframe, start=start, end=now)
+    try:
+        existing = load_parquet(base_path, symbol, timeframe, start=start, end=now)
+    except ProvenanceDenyError as exc:
+        logger.warning(
+            "ensure_live_data_provenance_deny symbol=%s timeframe=%s reason=%s (cache untouched)",
+            symbol, timeframe, exc,
+        )
+        existing = pd.DataFrame()
     source_name = str(source or "auto").lower()
     truth_mode_ctrader = source_name == "ctrader"
 
@@ -478,11 +598,19 @@ def ensure_live_data(
             )
             if provider == "ctrader":
                 data = _fetch_ctrader(broker, symbol, timeframe, start, now)
+                offer_side = "unknown"
             else:
                 data = _fetch_dukascopy(symbol, timeframe, start, now)
+                offer_side = "bid"
 
+            provenance = _writer_provenance(
+                symbol=symbol,
+                timeframe=timeframe,
+                source=provider,
+                offer_side=offer_side,
+            )
             if not data.empty and len(data) >= min_bars:
-                save_parquet(base_path, symbol, timeframe, data)
+                save_parquet(base_path, symbol, timeframe, data, provenance=provenance)
                 first_ts, last_ts = _frame_range_text(data)
                 logger.info(
                     "live_data_refresh_success requested=%s actual=%s symbol=%s timeframe=%s bars=%d "
@@ -493,8 +621,10 @@ def ensure_live_data(
             if not data.empty and (best_partial is None or len(data) > len(best_partial)):
                 best_partial = data
                 best_partial_source = provider
-                save_parquet(base_path, symbol, timeframe, data)
+                save_parquet(base_path, symbol, timeframe, data, provenance=provenance)
             failure_reasons.append(f"{provider}: rows={len(data)}")
+        except (ProvenanceIdentityError, ProvenanceDenyError, ProvenanceError) as e:
+            failure_reasons.append(f"{provider}: provenance:{e}")
         except Exception as e:
             failure_reasons.append(f"{provider}: {e}")
 
