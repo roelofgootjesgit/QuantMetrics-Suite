@@ -1,4 +1,4 @@
-"""CLI entrypoint: backtest, fetch, live, news-test."""
+"""CLI entrypoint: backtest, fetch, live, news-test, quarantine-cache."""
 import argparse
 import os
 import sys
@@ -144,6 +144,31 @@ def cmd_live(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_quarantine_cache(args: argparse.Namespace) -> int:
+    """Owner-invoked legacy cache quarantine (DATA-002 I4). Never called by load/ensure."""
+    from src.quantbuild.io.legacy_cache_quarantine import format_report_text, run_quarantine
+    import json
+
+    dry_run = bool(args.dry_run or args.inventory_only or not args.execute)
+    if args.execute and (args.dry_run or args.inventory_only):
+        print("Use either --dry-run/--inventory-only or --execute, not both.", file=sys.stderr)
+        return 2
+    report = run_quarantine(
+        args.base_path,
+        dry_run=dry_run,
+        move=bool(args.move),
+        symbols=args.symbols,
+    )
+    print(format_report_text(report), end="")
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return 0
+
+
 def cmd_suite_notify(args: argparse.Namespace) -> int:
     """Send suite start/stop Telegram using monitoring.telegram (for QuantMetrics OS orchestrator)."""
     cfg = load_config(args.config)
@@ -262,6 +287,33 @@ def main() -> int:
         help="Label this message as real execution",
     )
     sn.set_defaults(func=cmd_suite_notify)
+
+    qc = sub.add_parser(
+        "quarantine-cache",
+        help="Owner-invoked DATA-002 I4 legacy cache inventory/quarantine "
+        "(default COPY; --move opt-in; never deletes; not used by load/ensure)",
+    )
+    qc.add_argument(
+        "--base-path",
+        required=True,
+        type=Path,
+        help="Cache root (required; no production default)",
+    )
+    qc.add_argument("--dry-run", action="store_true", help="Report only")
+    qc.add_argument("--inventory-only", action="store_true", help="Alias for --dry-run")
+    qc.add_argument(
+        "--execute",
+        action="store_true",
+        help="Perform COPY (default) or MOVE (--move)",
+    )
+    qc.add_argument(
+        "--move",
+        action="store_true",
+        help="Opt-in MOVE into quarantine (default COPY)",
+    )
+    qc.add_argument("--symbol", action="append", dest="symbols", default=None)
+    qc.add_argument("--json-out", type=Path, default=None)
+    qc.set_defaults(func=cmd_quarantine_cache)
 
     args = parser.parse_args()
     try:
