@@ -226,7 +226,8 @@ def main() -> int:
     fetch.add_argument("--timeframe", "-t", default=None)
     fetch.add_argument("--days", "-d", type=int, default=None)
     fetch.add_argument("--source", choices=["auto", "ctrader", "dukascopy", "oanda", "yfinance"], default="auto",
-                        help="Data source (default: auto = ctrader -> dukascopy -> yfinance)")
+                        help="Data source (default: auto = ctrader -> dukascopy; yfinance never in auto; "
+                             "explicit yfinance DENY for spot XAUUSD)")
     fetch.set_defaults(func=cmd_fetch)
 
     news = sub.add_parser("news-test", help="Test news layer (poll once)")

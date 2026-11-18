@@ -17,10 +17,14 @@ from src.quantbuild.io.research_source_policy import (
     ResearchSourcePolicyError,
     assert_research_provenance_claim,
     assert_spot_xauusd_instrument_allowed,
+    is_spot_xauusd,
     research_auto_includes_yfinance,
     resolve_research_source_order,
     yfinance_ticker_for_symbol,
 )
+
+# Casing variants that must all DENY yfinance/GC=F as spot gold (kills .upper() mutant).
+_SPOT_XAUUSD_SPELLINGS = ("XAUUSD", "xauusd", "XauUsd")
 
 
 def _ohlcv(n: int = 3, *, end: str | None = None) -> pd.DataFrame:
@@ -82,6 +86,77 @@ def test_explicit_yfinance_xauusd_deny() -> None:
         assert_spot_xauusd_instrument_allowed(
             "XAUUSD", instrument="gc_f_futures"
         )
+
+
+def test_is_spot_xauusd_upper_source_guard() -> None:
+    """Mutant guard: removing ``.upper()`` from ``is_spot_xauusd`` must be visible."""
+    src = inspect.getsource(is_spot_xauusd)
+    assert ".upper()" in src
+    for spelling in _SPOT_XAUUSD_SPELLINGS:
+        assert is_spot_xauusd(spelling) is True
+
+
+@pytest.mark.parametrize("symbol", _SPOT_XAUUSD_SPELLINGS)
+def test_b1_source_selection_yfinance_deny_casing_no_cache_write(
+    symbol: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B1: source-selection DENY for XAUUSD/xauusd/XauUsd; inventory unchanged."""
+    with pytest.raises(ResearchSourcePolicyError, match="never accepted|XAUUSD spot"):
+        resolve_research_source_order("yfinance", symbol=symbol)
+
+    base = tmp_path / "cache"
+    # Pre-seed under canonical path so a silent write would still change inventory.
+    seed_dir = base / "XAUUSD"
+    seed_dir.mkdir(parents=True)
+    seed_pq = seed_dir / "15m.parquet"
+    _ohlcv(4).to_parquet(seed_pq, compression="snappy")
+    before = _inventory(base)
+
+    def _trap_yf(*_a, **_k):
+        raise AssertionError(f"yfinance must not run for spelling {symbol!r}")
+
+    monkeypatch.setattr(parquet_loader, "_fetch_yfinance", _trap_yf)
+    with pytest.raises(ResearchSourcePolicyError, match="never accepted|XAUUSD spot"):
+        parquet_loader.ensure_data(
+            symbol=symbol,
+            timeframe="15m",
+            base_path=base,
+            period_days=60,
+            source="yfinance",
+        )
+    assert _inventory(base) == before
+
+
+@pytest.mark.parametrize("symbol", _SPOT_XAUUSD_SPELLINGS)
+def test_b1_direct_yfinance_fetch_deny_casing_no_cache_write(
+    symbol: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B1: direct ``_fetch_yfinance`` DENY for casing variants; no download / no write."""
+    called = {"download": 0}
+
+    class _FakeYf:
+        @staticmethod
+        def download(*_a, **_k):
+            called["download"] += 1
+            return _ohlcv(120)
+
+    monkeypatch.setitem(__import__("sys").modules, "yfinance", _FakeYf)
+    base = tmp_path / "cache"
+    before = _inventory(base)
+    with pytest.raises(ResearchSourcePolicyError, match="never accepted|XAUUSD spot"):
+        parquet_loader._fetch_yfinance(symbol, "15m", 60)
+    assert called["download"] == 0
+    assert _inventory(base) == before
+    assert list(base.rglob("*.parquet")) == []
+
+
+def test_research_auto_excludes_yfinance_for_fx_and_indices() -> None:
+    """Documentation/regression: auto has no yfinance for FX/indices either."""
+    for symbol in ("EURUSD", "NAS100", "US30", "XAUUSD"):
+        requested, order = resolve_research_source_order("auto", symbol=symbol)
+        assert requested == "auto"
+        assert order == ["ctrader", "dukascopy"]
+        assert "yfinance" not in order
 
 
 def test_unknown_research_source_deny_no_silent_auto() -> None:

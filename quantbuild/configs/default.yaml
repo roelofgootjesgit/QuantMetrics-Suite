@@ -10,7 +10,7 @@ timeframes:
 
 data:
   base_path: data/market_cache
-  source: auto   # auto | ctrader | dukascopy | yfinance
+  source: auto   # auto (= ctrader -> dukascopy only; no yfinance) | ctrader | dukascopy | yfinance (DENY for spot XAUUSD)
   cache_ttl_hours: 24
 
 backtest:
