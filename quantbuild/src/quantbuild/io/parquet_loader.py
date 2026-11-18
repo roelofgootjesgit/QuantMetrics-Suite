@@ -3,10 +3,10 @@ Load/save OHLCV DataFrames as Parquet.
 
 Paths: base_path/SYMBOL/timeframe.parquet
 
-Data source priority:
+Research data source priority (DATA-002 I3):
   1. Existing Parquet cache
-  2. Dukascopy (free, up to 10+ years of history)
-  3. yfinance (fallback, limited to 60d for intraday)
+  2. cTrader / Dukascopy (``auto`` — never yfinance/GC=F)
+  Explicit ``yfinance`` is DENY for spot XAUUSD; unknown source DENY.
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -15,6 +15,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from src.quantbuild.io.research_source_policy import (
+    ResearchSourcePolicyError,
+    assert_spot_xauusd_instrument_allowed,
+    resolve_research_source_order,
+)
 from src.quantbuild.io.timezone_canon import (
     UnverifiedNaiveTimezoneError,
     canonicalize_index_utc_naive,
@@ -23,14 +28,9 @@ from src.quantbuild.io.timezone_canon import (
 logger = logging.getLogger(__name__)
 
 
-def _resolve_source_order(source: str) -> tuple[str, list[str]]:
-    source_name = str(source or "auto").lower()
-    if source_name == "auto":
-        return source_name, ["ctrader", "dukascopy", "yfinance"]
-    if source_name in {"ctrader", "dukascopy", "yfinance"}:
-        return source_name, [source_name]
-    logger.warning("Unknown data source '%s'; using auto", source_name)
-    return "auto", ["ctrader", "dukascopy", "yfinance"]
+def _resolve_source_order(source: str, *, symbol: str = "XAUUSD") -> tuple[str, list[str]]:
+    """Research source order — fail-closed (I3). Live uses its own path."""
+    return resolve_research_source_order(source, symbol=symbol)
 
 
 def _frame_range_text(df: pd.DataFrame) -> tuple[str, str]:
@@ -278,13 +278,26 @@ def _fetch_yfinance(
     timeframe: str,
     period_days: int,
 ) -> pd.DataFrame:
-    """Fetch OHLCV data from yfinance (limited to 60d for intraday)."""
+    """Fetch OHLCV data from yfinance (limited to 60d for intraday).
+
+    Spot XAUUSD is fail-closed: GC=F must never be fetched/written as XAUUSD.
+    """
+    # Defense in depth — even direct callers cannot map XAUUSD → GC=F.
+    assert_spot_xauusd_instrument_allowed(symbol, source="yfinance")
+
     try:
         import yfinance as yf
     except ImportError:
         return pd.DataFrame()
 
-    ticker = "GC=F" if symbol.upper() == "XAUUSD" else f"{symbol}=X"
+    from src.quantbuild.io.research_source_policy import yfinance_ticker_for_symbol
+
+    ticker = yfinance_ticker_for_symbol(symbol)
+    # Spot XAUUSD already DENY above; remaining path is non-spot FX (=X), never GC=F→XAUUSD.
+    if ticker.upper() == "GC=F":
+        raise ResearchSourcePolicyError(
+            "research DENY: refusing GC=F ticker for any research fetch writing spot cache"
+        )
     interval = {"1h": "1h", "15m": "15m", "5m": "5m"}.get(timeframe, "15m")
     period = "60d" if period_days <= 60 else "3mo"
     data = yf.download(tickers=ticker, period=period, interval=interval, progress=False, auto_adjust=True)
@@ -316,8 +329,11 @@ def ensure_data(
     broker: Any = None,
 ) -> pd.DataFrame:
     """
-    Ensure data exists with configurable source routing.
-    Supported source values: auto, dukascopy, ctrader, yfinance.
+    Ensure data exists with configurable research source routing (DATA-002 I3).
+
+    Supported: auto (ctrader→dukascopy only), dukascopy, ctrader.
+    Explicit yfinance for spot XAUUSD → DENY (no GC=F write). Unknown source → DENY.
+    On DENY / failed fetch: existing cache inventory is left untouched.
     """
     end = datetime.now()
     start = end - timedelta(days=period_days)
@@ -327,7 +343,8 @@ def ensure_data(
     if len(existing) > 100:
         return existing
 
-    source_requested, source_order = _resolve_source_order(source)
+    # Policy DENY before any provider attempt or write (cache untouched).
+    source_requested, source_order = _resolve_source_order(source, symbol=symbol)
     failure_reasons: list[str] = []
 
     for provider in source_order:
@@ -361,6 +378,8 @@ def ensure_data(
                     return load_parquet(base_path, symbol, timeframe, start=start, end=end)
                 failure_reasons.append(f"{provider}: rows={len(data)}")
             elif provider == "yfinance":
+                # Only reachable for non-spot symbols after resolve_research_source_order.
+                assert_spot_xauusd_instrument_allowed(symbol, source="yfinance")
                 data = _fetch_yfinance(symbol, timeframe, period_days)
                 if not data.empty:
                     save_parquet(base_path, symbol, timeframe, data)
@@ -372,6 +391,9 @@ def ensure_data(
                     )
                     return load_parquet(base_path, symbol, timeframe, start=start, end=end)
                 failure_reasons.append(f"{provider}: rows=0")
+        except ResearchSourcePolicyError:
+            # Do not swallow policy DENY into soft failure / next provider.
+            raise
         except Exception as e:
             failure_reasons.append(f"{provider}: {e}")
 

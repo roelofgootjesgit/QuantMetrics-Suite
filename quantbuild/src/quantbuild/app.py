@@ -57,14 +57,19 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 continue
 
             from src.quantbuild.io.parquet_loader import ensure_data
-            data = ensure_data(
-                symbol=symbol,
-                timeframe=tf,
-                base_path=base,
-                period_days=period_days,
-                source=source,
-                broker=broker,
-            )
+            from src.quantbuild.io.research_source_policy import ResearchSourcePolicyError
+            try:
+                data = ensure_data(
+                    symbol=symbol,
+                    timeframe=tf,
+                    base_path=base,
+                    period_days=period_days,
+                    source=source,
+                    broker=broker,
+                )
+            except ResearchSourcePolicyError as exc:
+                print(f"  DENY: {exc}")
+                return 2
             if data.empty:
                 print(f"  No data returned for {symbol} {tf} (source={source})")
             else:
@@ -221,7 +226,8 @@ def main() -> int:
     fetch.add_argument("--timeframe", "-t", default=None)
     fetch.add_argument("--days", "-d", type=int, default=None)
     fetch.add_argument("--source", choices=["auto", "ctrader", "dukascopy", "oanda", "yfinance"], default="auto",
-                        help="Data source (default: auto = ctrader -> dukascopy -> yfinance)")
+                        help="Data source (default: auto = ctrader -> dukascopy; yfinance never in auto; "
+                             "explicit yfinance DENY for spot XAUUSD)")
     fetch.set_defaults(func=cmd_fetch)
 
     news = sub.add_parser("news-test", help="Test news layer (poll once)")
