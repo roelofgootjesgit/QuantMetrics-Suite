@@ -16,7 +16,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping, Optional
 
 from filelock import FileLock
 
@@ -26,6 +26,20 @@ IDENTITY_FIELDS = (
     "source",
     "instrument",
     "offer_side",
+    "timezone_storage",
+    "index_semantics",
+)
+
+# Strict identity — must match exactly on refresh.
+HARD_IDENTITY_FIELDS = (
+    "source",
+    "instrument",
+    "offer_side",
+)
+
+# Semantic identity — writer's "unknown" is compatible with owner-attested values;
+# a concrete conflicting claim DENYs. On byte-changing refresh these reset to unknown.
+SEMANTIC_IDENTITY_FIELDS = (
     "timezone_storage",
     "index_semantics",
 )
@@ -117,8 +131,33 @@ def read_sidecar(path: Path) -> dict[str, Any]:
     return data
 
 
-def _identity_tuple(meta: Mapping[str, Any]) -> tuple:
-    return tuple(meta.get(k) for k in IDENTITY_FIELDS)
+def _is_unknown(value: Any) -> bool:
+    return value in (None, "", "unknown")
+
+
+def _identity_compatible(
+    existing: Mapping[str, Any], intent: Mapping[str, Any]
+) -> bool:
+    """Return True when writer intent may refresh an existing sidecar.
+
+    Hard fields must match exactly. For timezone_storage / index_semantics,
+    writer ``unknown`` is compatible with existing owner-attested values (not an
+    overwrite claim). A concrete writer value that differs from an existing
+    concrete value is a conflict → incompatible.
+    """
+    for key in HARD_IDENTITY_FIELDS:
+        if existing.get(key) != intent.get(key):
+            return False
+    for key in SEMANTIC_IDENTITY_FIELDS:
+        intent_v = intent.get(key)
+        existing_v = existing.get(key)
+        if _is_unknown(intent_v):
+            continue
+        if _is_unknown(existing_v):
+            continue
+        if intent_v != existing_v:
+            return False
+    return True
 
 
 def _strip_writer_attestation(intent: Mapping[str, Any]) -> dict[str, Any]:
@@ -133,27 +172,41 @@ def _merge_sidecar(
     existing: Optional[Mapping[str, Any]],
 ) -> dict[str, Any]:
     clean_intent = _strip_writer_attestation(intent)
-    out: dict[str, Any] = dict(clean_intent)
+    out: dict[str, Any] = {
+        k: v for k, v in clean_intent.items() if k not in SEMANTIC_IDENTITY_FIELDS
+    }
     out["content_sha256"] = content_sha256
     out["schema_version"] = str(clean_intent.get("schema_version") or SCHEMA_VERSION)
     out["written_at_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     out["single_source"] = bool(clean_intent.get("single_source", True))
 
+    for key in HARD_IDENTITY_FIELDS:
+        out[key] = clean_intent[key]
+
     if existing is None:
+        for key in SEMANTIC_IDENTITY_FIELDS:
+            out[key] = clean_intent.get(key, "unknown")
         return out
 
-    # Preserve owner-attested fields only when still bound to the same content hash.
     prev_hash = existing.get("content_sha256")
     if prev_hash == content_sha256:
+        # Identical bytes: preserve owner attestation + attested semantics.
         for key in OWNER_ATTESTED_FIELDS:
-            if key in existing and key not in out:
+            if key in existing:
                 out[key] = existing[key]
-        # Also preserve attested semantic fields when hash unchanged and previously attested.
         if existing.get("attested_by"):
-            for key in ("index_semantics", "timezone_storage"):
-                if key in existing:
-                    out[key] = existing[key]
-    # If hash changed: do not copy old attestation (invalid for new bytes).
+            for key in SEMANTIC_IDENTITY_FIELDS:
+                out[key] = existing.get(key, "unknown")
+        else:
+            for key in SEMANTIC_IDENTITY_FIELDS:
+                intent_v = clean_intent.get(key, "unknown")
+                existing_v = existing.get(key, "unknown")
+                out[key] = existing_v if _is_unknown(intent_v) else intent_v
+        return out
+
+    # Changed bytes: invalidate attestation; reset semantics to unknown (HTF DENY).
+    for key in SEMANTIC_IDENTITY_FIELDS:
+        out[key] = "unknown"
     return out
 
 
@@ -229,6 +282,13 @@ def write_parquet_atomic_with_sidecar(
         if key not in intent or intent[key] in (None, ""):
             raise ProvenanceError(f"write intent missing identity field: {key}")
 
+    # Legacy parquet without sidecar: DENY before lock so inventory stays untouched
+    # (FileLock would otherwise create a .lock file).
+    if pq_path.is_file() and not sc_path.is_file():
+        raise ProvenanceDenyError(
+            "parquet exists without sidecar; refusing overwrite; no silent recovery"
+        )
+
     lock = FileLock(str(lk_path), timeout=lock_timeout)
     with lock:
         existing_meta: Optional[dict[str, Any]] = None
@@ -246,11 +306,15 @@ def write_parquet_atomic_with_sidecar(
                     "refusing overwrite; no silent recovery"
                 ) from exc
 
-            if _identity_tuple(existing_meta) != _identity_tuple(intent):
+            # Identity gate BEFORE any file mutation — no silent owner-field overwrites.
+            if not _identity_compatible(existing_meta, intent):
                 raise ProvenanceIdentityError(
                     "refresh DENY: identity mismatch "
-                    f"existing={_identity_tuple(existing_meta)} "
-                    f"intent={_identity_tuple(intent)}; originals untouched"
+                    f"existing_hard={tuple(existing_meta.get(k) for k in HARD_IDENTITY_FIELDS)} "
+                    f"intent_hard={tuple(intent.get(k) for k in HARD_IDENTITY_FIELDS)} "
+                    f"existing_sem={tuple(existing_meta.get(k) for k in SEMANTIC_IDENTITY_FIELDS)} "
+                    f"intent_sem={tuple(intent.get(k) for k in SEMANTIC_IDENTITY_FIELDS)}; "
+                    "originals untouched"
                 )
 
         tmp_pq = out_dir / f".{timeframe}.parquet.tmp.{os.getpid()}"
@@ -275,16 +339,6 @@ def write_parquet_atomic_with_sidecar(
             sidecar_body["writer"] = intent.get(
                 "writer", "quantbuild.provenance_cache"
             )
-            for key in IDENTITY_FIELDS:
-                # Hash changed → writer identity wins; attested semantics only preserved
-                # inside _merge_sidecar when hash unchanged + attested_by present.
-                if not (
-                    existing_meta
-                    and digest == existing_meta.get("content_sha256")
-                    and existing_meta.get("attested_by")
-                    and key in ("index_semantics", "timezone_storage")
-                ):
-                    sidecar_body[key] = intent[key]
 
             tmp_sc.write_text(
                 json.dumps(sidecar_body, indent=2, sort_keys=True) + "\n",

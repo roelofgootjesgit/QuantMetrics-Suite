@@ -139,7 +139,26 @@ def test_rejected_load_inventory_unchanged(tmp_path: Path) -> None:
     assert after == before
 
 
-def test_owner_attested_fields_not_overwritten_by_writer(tmp_path: Path) -> None:
+def _owner_attest(
+    sc: Path,
+    *,
+    timezone_storage: str = "naive_utc",
+    index_semantics: str = "bar_open_utc",
+) -> dict:
+    meta = json.loads(sc.read_text(encoding="utf-8"))
+    meta["attested_by"] = "owner"
+    meta["attested_at_utc"] = "2026-11-18T00:00:00Z"
+    meta["method"] = "dta-manual"
+    meta["timezone_storage"] = timezone_storage
+    meta["index_semantics"] = index_semantics
+    sc.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    return meta
+
+
+def test_b1_writer_unknown_compatible_identical_bytes_preserve_attestation(
+    tmp_path: Path,
+) -> None:
+    """B1: writer unknown compatible; identical bytes retain owner attestation."""
     from src.quantbuild.io.provenance_cache import write_parquet_atomic_with_sidecar
 
     base = tmp_path / "cache"
@@ -147,20 +166,10 @@ def test_owner_attested_fields_not_overwritten_by_writer(tmp_path: Path) -> None
     parquet_loader.save_parquet(base, "XAUUSD", "15m", frame, provenance=_prov())
     sc = sidecar_path_for(base, "XAUUSD", "15m")
     pq = parquet_loader.path_for(base, "XAUUSD", "15m")
-    meta = json.loads(sc.read_text(encoding="utf-8"))
-    meta["attested_by"] = "owner"
-    meta["attested_at_utc"] = "2026-11-18T00:00:00Z"
-    meta["method"] = "dta-manual"
-    meta["index_semantics"] = "bar_open_utc"
-    sc.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-    # Same parquet bytes + matching identity: writer invents attested_by — must not stick.
+    _owner_attest(sc)
     raw = pq.read_bytes()
-    evil_same = _prov(
-        attested_by="attacker",
-        index_semantics="bar_open_utc",  # must match attested identity to refresh
-    )
 
+    # Writer unknown must NOT overwrite attested semantics; identical bytes keep attestation.
     def _copy_same_bytes(tmp: Path) -> None:
         tmp.write_bytes(raw)
 
@@ -169,22 +178,60 @@ def test_owner_attested_fields_not_overwritten_by_writer(tmp_path: Path) -> None
         symbol="XAUUSD",
         timeframe="15m",
         frame_writer=_copy_same_bytes,
-        provenance=evil_same,
+        provenance=_prov(attested_by="attacker"),  # stripped; semantics stay unknown in intent
     )
     after = json.loads(sc.read_text(encoding="utf-8"))
     assert after["attested_by"] == "owner"
-    assert after["method"] == "dta-manual"
+    assert after["timezone_storage"] == "naive_utc"
     assert after["index_semantics"] == "bar_open_utc"
+    parquet_loader.load_parquet(base, "XAUUSD", "15m", require_htf_owner_dta=True)
 
-    # Different bytes with matching writer identity: old attestation cleared; attacker stripped.
-    evil_refresh = _prov(attested_by="attacker", index_semantics="bar_open_utc")
+
+def test_b1_concrete_conflicting_writer_claim_deny_originals_untouched(
+    tmp_path: Path,
+) -> None:
+    """B1: concrete conflicting semantic claim DENYs before write; inventory unchanged."""
+    base = tmp_path / "cache"
+    parquet_loader.save_parquet(base, "XAUUSD", "15m", _ohlcv(3), provenance=_prov())
+    sc = sidecar_path_for(base, "XAUUSD", "15m")
+    _owner_attest(sc)
+    before = inventory_snapshot(base / "XAUUSD")
+    sc_before = sc.read_text(encoding="utf-8")
+
+    with pytest.raises(ProvenanceIdentityError, match="identity mismatch"):
+        parquet_loader.save_parquet(
+            base,
+            "XAUUSD",
+            "15m",
+            _ohlcv(5),
+            provenance=_prov(index_semantics="bar_close_utc"),
+        )
+
+    assert inventory_snapshot(base / "XAUUSD") == before
+    assert sc.read_text(encoding="utf-8") == sc_before
+
+
+def test_b1_changed_bytes_invalidate_attestation_reset_unknown_htf_deny(
+    tmp_path: Path,
+) -> None:
+    """B1 realistic: attest → same-source changed-byte refresh PASS → HTF DENY."""
+    base = tmp_path / "cache"
+    parquet_loader.save_parquet(base, "XAUUSD", "15m", _ohlcv(3), provenance=_prov())
+    sc = sidecar_path_for(base, "XAUUSD", "15m")
+    _owner_attest(sc)
+
+    # Writer unknown is compatible with attested semantics; bytes change → invalidate.
     parquet_loader.save_parquet(
-        base, "XAUUSD", "15m", _ohlcv(5), provenance=evil_refresh
+        base, "XAUUSD", "15m", _ohlcv(5), provenance=_prov()
     )
-    after2 = json.loads(sc.read_text(encoding="utf-8"))
-    assert "attested_by" not in after2
-    assert after2.get("attested_by") != "attacker"
-    assert after2["index_semantics"] == "bar_open_utc"
+    after = json.loads(sc.read_text(encoding="utf-8"))
+    assert "attested_by" not in after
+    assert after["timezone_storage"] == "unknown"
+    assert after["index_semantics"] == "unknown"
+    with pytest.raises(ProvenanceDenyError, match="HTF DENY|attested_by"):
+        parquet_loader.load_parquet(
+            base, "XAUUSD", "15m", require_htf_owner_dta=True
+        )
 
 
 def test_htf_requires_owner_dta_bound_to_content_hash(tmp_path: Path) -> None:
@@ -244,3 +291,53 @@ def test_dukascopy_naive_time_column_mutant_killed() -> None:
 def test_save_parquet_requires_provenance(tmp_path: Path) -> None:
     with pytest.raises(Exception, match="provenance"):
         parquet_loader.save_parquet(tmp_path, "XAUUSD", "15m", _ohlcv(2))
+
+
+def test_b2_single_source_false_load_deny_mutant_guard(tmp_path: Path) -> None:
+    """B2: sidecar single_source:false → load DENY; guard must stay in validate path."""
+    import src.quantbuild.io.provenance_cache as pc
+
+    src = inspect.getsource(pc.validate_sidecar_against_parquet)
+    assert "single_source" in src
+    assert "must be true" in src
+
+    base = tmp_path / "cache"
+    parquet_loader.save_parquet(base, "XAUUSD", "15m", _ohlcv(3), provenance=_prov())
+    sc = sidecar_path_for(base, "XAUUSD", "15m")
+    meta = json.loads(sc.read_text(encoding="utf-8"))
+    meta["single_source"] = False
+    sc.write_text(json.dumps(meta), encoding="utf-8")
+    before = inventory_snapshot(base)
+    with pytest.raises(ProvenanceDenyError, match="single_source"):
+        parquet_loader.load_parquet(base, "XAUUSD", "15m")
+    assert inventory_snapshot(base) == before
+
+
+def test_b2_legacy_parquet_without_sidecar_save_deny_inventory_unchanged(
+    tmp_path: Path,
+) -> None:
+    """B2: legacy parquet sans sidecar → save DENY; path/size/mtime inventory identical."""
+    import src.quantbuild.io.provenance_cache as pc
+
+    src = inspect.getsource(pc.write_parquet_atomic_with_sidecar)
+    assert "parquet exists without sidecar" in src
+
+    base = tmp_path / "cache" / "XAUUSD"
+    base.mkdir(parents=True)
+    pq = base / "15m.parquet"
+    _ohlcv(3).to_parquet(pq, compression="snappy")
+    # No sidecar on purpose (legacy).
+    before = inventory_snapshot(tmp_path / "cache")
+    assert "XAUUSD/15m.parquet" in before
+    assert not any(p.endswith(".provenance.json") for p in before)
+
+    with pytest.raises(ProvenanceDenyError, match="without sidecar"):
+        parquet_loader.save_parquet(
+            tmp_path / "cache",
+            "XAUUSD",
+            "15m",
+            _ohlcv(4),
+            provenance=_prov(),
+        )
+    after = inventory_snapshot(tmp_path / "cache")
+    assert after == before
