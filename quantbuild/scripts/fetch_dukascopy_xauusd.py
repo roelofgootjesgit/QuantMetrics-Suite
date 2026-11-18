@@ -21,6 +21,8 @@ import pandas as pd
 import dukascopy_python as duka
 from dukascopy_python.instruments import INSTRUMENT_FX_METALS_XAU_USD
 
+from src.quantbuild.io.timezone_canon import canonicalize_index_utc_naive
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_DIR = ROOT / "data" / "market_cache" / "XAUUSD"
 
@@ -55,10 +57,10 @@ def fetch_timeframe(
     if not isinstance(df.index, pd.DatetimeIndex):
         if "timestamp" in df.columns:
             df = df.set_index("timestamp")
-        df.index = pd.to_datetime(df.index, utc=True)
+        # Do not pass utc=True (silent naive==UTC). Vendor TZ remains UNVERIFIED.
+        df.index = pd.to_datetime(df.index)
 
-    if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+    df.index = canonicalize_index_utc_naive(df.index, source="dukascopy")
 
     df = df.sort_index()
 

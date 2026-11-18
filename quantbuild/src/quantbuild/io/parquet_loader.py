@@ -15,6 +15,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from src.quantbuild.io.timezone_canon import (
+    UnverifiedNaiveTimezoneError,
+    canonicalize_index_utc_naive,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,10 +174,12 @@ def _fetch_dukascopy(
     if not isinstance(df.index, pd.DatetimeIndex):
         if "timestamp" in df.columns:
             df = df.set_index("timestamp")
-        df.index = pd.to_datetime(df.index, utc=True)
+        # Do not pass utc=True: that silently assumes naive==UTC (UNVERIFIED for Dukascopy).
+        df.index = pd.to_datetime(df.index)
 
-    if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+    # Aware → UTC-naive via tz_convert; naive without verified contract → DENY.
+    # Does not attest Dukascopy vendor TZ / open-close semantics (DTA still UNVERIFIED).
+    df.index = canonicalize_index_utc_naive(df.index, source="dukascopy")
 
     df = df.sort_index()
     for col in ("open", "high", "low", "close", "volume"):
@@ -217,17 +224,22 @@ def _normalize_ohlcv_frame(data: Any) -> pd.DataFrame:
 
     if "timestamp" in resolved:
         data = data.set_index(resolved["timestamp"])
+    # Do not pass utc=True: that silently assumes naive==UTC (UNVERIFIED for cTrader).
     if not isinstance(data.index, pd.DatetimeIndex):
-        data.index = pd.to_datetime(data.index, errors="coerce", utc=True)
+        data.index = pd.to_datetime(data.index, errors="coerce")
     else:
-        data.index = pd.to_datetime(data.index, utc=True)
+        data.index = pd.to_datetime(data.index)
 
     data = data[~data.index.isna()].copy()
     if data.empty:
         return pd.DataFrame()
 
-    if data.index.tz is not None:
-        data.index = data.index.tz_localize(None)
+    # Aware → UTC-naive; naive without verified contract → DENY.
+    # Does not attest cTrader vendor TZ / open-close semantics (DTA still UNVERIFIED).
+    try:
+        data.index = canonicalize_index_utc_naive(data.index, source="ctrader")
+    except UnverifiedNaiveTimezoneError:
+        return pd.DataFrame()
 
     out = pd.DataFrame(index=data.index)
     out["open"] = pd.to_numeric(data[resolved["open"]], errors="coerce")
@@ -289,9 +301,9 @@ def _fetch_yfinance(
     if "volume" not in data.columns:
         data["volume"] = 0
 
+    # All symbols (incl. XAUUSD→GC=F and FX `=X` fallback): never bare tz_localize(None).
     data.index = pd.to_datetime(data.index)
-    if data.index.tz is not None:
-        data.index = data.index.tz_localize(None)
+    data.index = canonicalize_index_utc_naive(data.index, source="yfinance")
     return data[["open", "high", "low", "close", "volume"]]
 
 
