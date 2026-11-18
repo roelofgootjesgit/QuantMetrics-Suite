@@ -57,14 +57,19 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 continue
 
             from src.quantbuild.io.parquet_loader import ensure_data
-            data = ensure_data(
-                symbol=symbol,
-                timeframe=tf,
-                base_path=base,
-                period_days=period_days,
-                source=source,
-                broker=broker,
-            )
+            from src.quantbuild.io.research_source_policy import ResearchSourcePolicyError
+            try:
+                data = ensure_data(
+                    symbol=symbol,
+                    timeframe=tf,
+                    base_path=base,
+                    period_days=period_days,
+                    source=source,
+                    broker=broker,
+                )
+            except ResearchSourcePolicyError as exc:
+                print(f"  DENY: {exc}")
+                return 2
             if data.empty:
                 print(f"  No data returned for {symbol} {tf} (source={source})")
             else:
